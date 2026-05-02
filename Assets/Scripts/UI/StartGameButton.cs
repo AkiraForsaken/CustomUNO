@@ -1,34 +1,34 @@
+// StartGameButton.cs — full corrected file
 using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.SceneManagement;
 using Unity.Netcode;
+using UnityEngine.SceneManagement;
 
-public class StartGameButton : NetworkBehaviour
+public class StartGameButton : MonoBehaviour
 {
-  [SerializeField] private Button startButton;
+    [SerializeField] private Button startButton;
 
-  public override void OnNetworkSpawn()
-  {
-    // Only the host can see and press this button
-    startButton.gameObject.SetActive(IsHost);
-  }
-
-  public void OnStartGameClicked()
-  {
-    if (!IsHost) return;
-
-    if (NetworkManager.Singleton.ConnectedClients.Count < 2)
+    public void RefreshVisibility()
     {
-      Debug.LogWarning("Need at least 2 players to start.");
-      return;
+        bool isHost = NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost;
+        startButton.gameObject.SetActive(isHost);
     }
-    StartGameServerRpc();
-  }
-  [Rpc(SendTo.Server)]
-  private void StartGameServerRpc()
-  {
-    NetworkManager.Singleton.SceneManager.LoadScene(
-      "Game", LoadSceneMode.Single
-    );
-  }
+
+    public void OnStartGameClicked()
+    {
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsHost) return;
+
+        if (!LobbyManager.Instance.CanStartGame())
+        {
+            int current = LobbyManager.Instance.GetCurrentPlayers().Count;
+            int needed = LobbyManager.MIN_PLAYERS - current;
+            UIWarningManager.Instance.ShowWarning(
+                $"Need {needed} more player{(needed > 1 ? "s" : "")} to start."
+            );
+            return;
+        }
+
+        // Host loads the scene — NGO propagates it to all clients
+        NetworkManager.Singleton.SceneManager.LoadScene("Game", LoadSceneMode.Single);
+    }
 }
