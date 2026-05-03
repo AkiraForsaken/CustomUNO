@@ -11,6 +11,7 @@ public class GameState
   public CardColor activeColor; // for Wild overrides
   public int pendingDrawPenalty; // for stacking rule
   public GamePhase phase;
+  public Dictionary<string, int> handCounts = new(); // playerId → card count
 }
 
 public enum GamePhase
