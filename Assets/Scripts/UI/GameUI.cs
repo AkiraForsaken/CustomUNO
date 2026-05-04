@@ -127,9 +127,9 @@ public class GameUI : MonoBehaviour
         string symbolName = state.topCard.type switch
         {
             CardType.Number       => $"_{state.topCard.number}",
-            CardType.Skip         => "_skip",
-            CardType.Reverse      => "_reverse",
-            CardType.DrawTwo      => "_drawtwo",
+            CardType.Skip         => "_interdit",   // Đã sửa
+            CardType.Reverse      => "_revers",     // Đã sửa
+            CardType.DrawTwo      => "_draw2",      // Đã sửa
             CardType.Wild         => "_wild",
             CardType.WildDrawFour => "_wild_draw",
             _                     => "_0"
