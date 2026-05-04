@@ -12,8 +12,10 @@ public class UIWarningManager : MonoBehaviour
     [SerializeField] private TextMeshProUGUI titleText;
     [SerializeField] private TextMeshProUGUI messageText;
     [SerializeField] private Button okButton;
+    [SerializeField] private Button cancelButton;
 
     private Action onConfirm;   // optional callback when OK is pressed
+    private Action onCancel;    // optional callback when Cancel is pressed
 
     private void Awake()
     {
@@ -21,10 +23,11 @@ public class UIWarningManager : MonoBehaviour
         Instance = this;
 
         // Start hidden
-        warningModal.SetActive(false);
+        if (warningModal != null) warningModal.SetActive(false);
 
-        // Wire up the OK button once
-        okButton.onClick.AddListener(OnOKClicked);
+        // Wire up the OK/Cancel buttons once (if present)
+        if (okButton != null) okButton.onClick.AddListener(OnOKClicked);
+        if (cancelButton != null) cancelButton.onClick.AddListener(OnCancelClicked);
     }
 
     // Simple warning — just a message, no callback
@@ -36,21 +39,41 @@ public class UIWarningManager : MonoBehaviour
     // Warning with a callback — fires when player clicks OK
     public void ShowWarning(string message, Action onOKPressed, string title = "Warning")
     {
-        ShowModal(title, message, onOKPressed);
+        ShowModal(title, message, onOKPressed, null);
     }
 
-    private void ShowModal(string title, string message, Action callback)
+    // Warning with OK and Cancel callbacks — shows Cancel button
+    public void ShowWarning(string message, Action onOKPressed, Action onCancelPressed, string title = "Warning")
     {
-        titleText.text = title;
-        messageText.text = message;
+        ShowModal(title, message, onOKPressed, onCancelPressed);
+    }
+
+    private void ShowModal(string title, string message, Action callback, Action cancelCallback = null)
+    {
+        if (titleText != null) titleText.text = title;
+        if (messageText != null) messageText.text = message;
         onConfirm = callback;
-        warningModal.SetActive(true);
+        onCancel = cancelCallback;
+
+        if (cancelButton != null)
+            cancelButton.gameObject.SetActive(cancelCallback != null);
+
+        if (warningModal != null) warningModal.SetActive(true);
     }
 
     private void OnOKClicked()
     {
-        warningModal.SetActive(false);
+        if (warningModal != null) warningModal.SetActive(false);
         onConfirm?.Invoke();   // fire callback if one was set
         onConfirm = null;
+        onCancel = null;
+    }
+
+    private void OnCancelClicked()
+    {
+        if (warningModal != null) warningModal.SetActive(false);
+        onCancel?.Invoke();
+        onConfirm = null;
+        onCancel = null;
     }
 }

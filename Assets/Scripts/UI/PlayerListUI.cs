@@ -13,7 +13,8 @@ public class PlayerListUI : MonoBehaviour
   [SerializeField] private Transform playerListContainer;  // parent object for rows
   [SerializeField] private GameObject playerRowPrefab;     // one row per player
   [SerializeField] private TextMeshProUGUI roomCodeText;
-  [SerializeField] private TextMeshProUGUI playerCountText; 
+  [SerializeField] private TextMeshProUGUI playerCountText;
+  [SerializeField] private HouseRulesPanel houseRulesPanel;
 
   private void Awake()
   {
@@ -25,12 +26,13 @@ public class PlayerListUI : MonoBehaviour
   {
     roomCodeText.text = $"Room Code: {LobbyManager.Instance.GetLobbyCode()}";
     RefreshPlayerList(LobbyManager.Instance.GetCurrentPlayers());
-    startGameButton?.RefreshVisibility();   // ← add this
+    startGameButton?.RefreshVisibility();
+    houseRulesPanel?.Refresh();
   }
 
   public void RefreshPlayerList(List<Player> players)
   {
-    Debug.Log($"RefreshPlayerList called with {players.Count} players");
+    // Debug.Log($"RefreshPlayerList called with {players.Count} players");
 
     foreach (Transform child in playerListContainer)
       Destroy(child.gameObject);

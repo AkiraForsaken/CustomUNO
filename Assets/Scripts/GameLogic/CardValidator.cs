@@ -1,32 +1,54 @@
 // CardValidator.cs
-// Member 1 owns this file. The stub compiles immediately so the rest
-// of the UI can be built and tested before game logic is complete.
 public static class CardValidator
 {
     // Returns true if playing 'card' is a legal move given the current state.
-    // Rules: Wild/WildDrawFour are always legal.
-    //        Otherwise card must match activeColor, OR match topCard number (Number cards),
-    //        OR match topCard type (action cards).
-    //        "No action card win" rule: also checked here when hand will be empty after play.
-    public static bool IsLegal(CardInstance card, GameState state)
+    public static bool IsLegal(CardInstance card, GameState state, int playerHandCount)
     {
-        // ── STUB: always returns true until Member 1 implements ───
-        // Replace the line below with real validation logic.
-        return true;
+        if (state.playerCount == 0) return false;
 
-        // ── Implementation guide for Member 1 ────────────────────
-        // if (state == null || state.topCard == null) return false;
-        //
-        // if (card.type == CardType.Wild || card.type == CardType.WildDrawFour)
-        //     return true;
-        //
-        // bool matchesColor  = card.color == state.activeColor;
-        // bool matchesNumber = card.type == CardType.Number
-        //                      && state.topCard.type == CardType.Number
-        //                      && card.number == state.topCard.number;
-        // bool matchesType   = card.type != CardType.Number
-        //                      && card.type == state.topCard.type;
-        //
-        // return matchesColor || matchesNumber || matchesType;
+        // Định nghĩa các thẻ chức năng (Action Cards)
+        bool isActionCard = card.type == CardType.Skip ||
+                            card.type == CardType.Reverse ||
+                            card.type == CardType.DrawTwo ||
+                            card.type == CardType.Wild ||
+                            card.type == CardType.WildDrawFour;
+
+        // 1. Kiểm tra luật "No Action Card Win"
+        // Nếu người chơi chỉ còn 1 lá và định đánh lá chức năng -> Bất hợp pháp
+        if (playerHandCount == 1 && isActionCard)
+        {
+            return false; 
+        }
+
+        // 2. Kiểm tra luật Stacking (Cộng dồn +2, +4)
+        // Yêu cầu: Cần đảm bảo state có thuộc tính pendingPenalty > 0 khi có người bị phạt
+        if (state.pendingPenalty > 0)
+        {
+            // Nếu đang bị phạt, chỉ được đánh đè thẻ phạt đúng luật
+            if (card.type == CardType.WildDrawFour) 
+            {
+                return true; // +4 luôn đè được mọi penalty
+            }
+            
+            if (card.type == CardType.DrawTwo && state.topCard.type != CardType.WildDrawFour)
+            {
+                return true; // +2 đè được +2, nhưng KHÔNG đè được +4
+            }
+            
+            return false; // Nếu không có thẻ phạt hợp lệ để đỡ, không được đánh lá nào khác
+        }
+
+        // 3. Luật Uno cơ bản (khi không bị phạt rút bài)
+        if (card.type == CardType.Wild || card.type == CardType.WildDrawFour)
+            return true;
+
+        bool matchesColor  = card.color == state.activeColor;
+        bool matchesNumber = card.type == CardType.Number
+                             && state.topCard.type == CardType.Number
+                             && card.number == state.topCard.number;
+        bool matchesType   = card.type != CardType.Number
+                             && card.type == state.topCard.type;
+
+        return matchesColor || matchesNumber || matchesType;
     }
 }
