@@ -1,15 +1,23 @@
+using Unity.Netcode;
 using System;
 
 [Serializable]
-public class CardInstance
+public struct CardInstance : INetworkSerializable, IEquatable<CardInstance>
 {
-  public string cardId; // ex: "Red_7", "Wild_DrawFour"
-  public CardColor color;
-  public CardType type;
-  public int number;
+    public CardColor color;
+    public CardType type;
+    public int number; 
 
-  public bool IsActionCard() =>
-    type == CardType.Skip || type == CardType.Reverse ||
-    type == CardType.DrawTwo || type == CardType.Wild ||
-    type == CardType.WildDrawFour;
+    public void NetworkSerialize<T>(BufferSerializer<T> serializer) where T : IReaderWriter
+    {
+        serializer.SerializeValue(ref color);
+        serializer.SerializeValue(ref type);
+        serializer.SerializeValue(ref number);
+    }
+
+    // Helper method để so sánh 2 thẻ
+    public bool Equals(CardInstance other)
+    {
+        return color == other.color && type == other.type && number == other.number;
+    }
 }
