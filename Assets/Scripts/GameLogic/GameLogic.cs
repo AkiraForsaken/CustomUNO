@@ -29,8 +29,8 @@ public class GameLogic : NetworkBehaviour
         }
     }
 
-    [ServerRpc(RequireOwnership = false)]
-    private void StartGameServerRpc(ServerRpcParams rpcParams = default)
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    private void StartGameServerRpc()
     {
         // Only host/authority should start the game
         if (!LobbyManager.Instance.CanStartGame()) return;
