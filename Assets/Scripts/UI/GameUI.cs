@@ -3,6 +3,8 @@ using Unity.Services.Authentication;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using Unity.Services.Lobbies.Models;
+using System.Linq;
 
 // Attach to the GameUI root object in the Game scene.
 // This is the single coordinator: it subscribes to GameEvents,
@@ -89,6 +91,38 @@ public class GameUI : MonoBehaviour
             backToMenuButton.onClick.AddListener(OnBackToMenuClicked);
         if (drawPileButton != null)
             drawPileButton.onClick.AddListener(() => GameEvents.RaiseDrawCardRequested());
+
+        // Fallback: if the networking layer didn't call InitializeGame,
+        // try to populate player names from the LobbyManager so UI shows names during testing.
+        TryInitializeFromLobbyIfNeeded();
+    }
+
+    // During development it's convenient to show player names even if NetworkGameManager
+    // hasn't wired them yet. This reads the LobbyManager's current players (if any)
+    // and calls InitializeGame with a simple starting-hand map so opponent panels show names.
+    private void TryInitializeFromLobbyIfNeeded()
+    {
+        if (playerNames != null && playerNames.Count > 0) return; // already set
+        if (typeof(LobbyManager) == null) return;
+        if (LobbyManager.Instance == null) return;
+
+        var players = LobbyManager.Instance.GetCurrentPlayers();
+        if (players == null || players.Count == 0) return;
+
+        // Build player order and name map. Use the order provided by the Lobby.
+        var order = new List<string>();
+        var names = new Dictionary<string, string>();
+        var handCounts = new Dictionary<string, int>();
+
+        foreach (var p in players)
+        {
+            order.Add(p.Id);
+            string nm = p.Data != null && p.Data.ContainsKey("PlayerName") ? p.Data["PlayerName"].Value : "Player";
+            names[p.Id] = nm;
+            handCounts[p.Id] = 7; // placeholder until DeckManager assigns real hands
+        }
+
+        InitializeGame(order, names, handCounts);
     }
 
     private void OnEnable()

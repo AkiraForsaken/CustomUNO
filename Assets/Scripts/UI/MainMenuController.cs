@@ -10,6 +10,7 @@ public class MainMenuController : MonoBehaviour
     [SerializeField] private GameObject mainMenuPanel;
     [SerializeField] private GameObject joinPanel;
     [SerializeField] private GameObject lobbyPanel;
+    [SerializeField] private GameObject houseRulesPanel;
     [SerializeField] private GameObject settingsPanel;
 
     [Header("Join Panel")]
@@ -47,6 +48,11 @@ public class MainMenuController : MonoBehaviour
     // Validates everything needed before joining
     private bool ValidateJoinInputs(string code)
     {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(code, "^[A-Z0-9]{6}$")) 
+        { 
+            UIWarningManager.Instance.ShowWarning("Room code contains invalid characters."); 
+            return false; 
+        }
         if (string.IsNullOrEmpty(code))
         {
             UIWarningManager.Instance.ShowWarning("Please enter a room code.");
@@ -177,6 +183,7 @@ public class MainMenuController : MonoBehaviour
                 LobbyManager.Instance.LeaveLobby();
                 ShowPanel(mainMenuPanel);
             },
+            onCancelPressed: () => { },
             title: "Leave Lobby"
         );
     }
@@ -197,12 +204,32 @@ public class MainMenuController : MonoBehaviour
         if (previousPanel != null) previousPanel.SetActive(true);
     }
 
+    // --- House Rules Panel ---
+    public void OnHouseRulesClicked()
+    {
+        previousPanel = lobbyPanel;
+        // Use ShowPanel to hide other panels and show the house rules panel
+        ShowPanel(houseRulesPanel);
+
+        // Ensure the HouseRulesPanel component syncs its UI state
+        var hr = houseRulesPanel != null ? houseRulesPanel.GetComponent<HouseRulesPanel>() : null;
+        hr?.Refresh();
+    }
+
+    // Called by the Confirm/Back button on the House Rules panel
+    public void OnHouseRulesConfirmClicked()
+    {
+        if (houseRulesPanel != null) houseRulesPanel.SetActive(false);
+        if (previousPanel != null) previousPanel.SetActive(true);
+    }
+
     private void ShowPanel(GameObject target)
     {
         mainMenuPanel.SetActive(false);
         joinPanel.SetActive(false);
         lobbyPanel.SetActive(false);
         settingsPanel.SetActive(false);
+        if (houseRulesPanel != null) houseRulesPanel.SetActive(false);
         target.SetActive(true);
     }
 }

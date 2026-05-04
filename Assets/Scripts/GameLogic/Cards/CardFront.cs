@@ -22,17 +22,28 @@ public class CardFront : MonoBehaviour
     {
         _data = card;
         // If the symbol asset already contains the full wild artwork (background + symbol),
-        // hide the base layer and use the symbol image directly.
-        bool symbolHasBackground = card.type == CardType.Wild || card.type == CardType.WildDrawFour;
-        if (symbolHasBackground)
+        // hide the base layer and use the symbol image directly for wilds
+        bool isWildType = card.type == CardType.Wild || card.type == CardType.WildDrawFour;
+        if (isWildType)
         {
             cardBase.enabled = false;
             cardBase.sprite = null;
         }
         else
         {
-            cardBase.enabled = true;
-            cardBase.sprite = GetBaseSprite(card.color);
+            // Get the color base sprite; if not assigned, disable the base layer so
+            // the card renders using only the symbol sprite.
+            var baseSprite = GetBaseSprite(card.color);
+            if (baseSprite == null)
+            {
+                cardBase.enabled = false;
+                cardBase.sprite = null;
+            }
+            else
+            {
+                cardBase.enabled = true;
+                cardBase.sprite = baseSprite;
+            }
         }
 
         cardSymbol.sprite = GetSymbolSprite(card);
