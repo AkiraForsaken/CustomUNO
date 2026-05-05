@@ -78,11 +78,13 @@ public class CardHandUI : MonoBehaviour
     {
         for (int i = 0; i < cardObjects.Count; i++)
         {
+            // THÊM DÒNG NÀY ĐỂ NGĂN CRASH KHI LỆCH NHỊP MẠNG:
+            if (i >= currentHand.Count) continue;
+
             if (cardObjects[i] == null) continue;
             var cf = cardObjects[i].GetComponent<CardFront>();
             if (cf == null) continue;
 
-            // Truyền thêm currentHand.Count vào đây
             bool playable = isLocalPlayerTurn
                             && CardValidator.IsLegal(currentHand[i], currentGameState, currentHand.Count);
             cf.SetPlayable(playable);
