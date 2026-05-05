@@ -1,19 +1,21 @@
 using System.Collections.Generic;
 using Unity.Netcode; 
-using Unity.Services.Authentication;
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 
-// Attach to HandContainer inside LocalPlayerArea.
-// Does NOT reference NetworkGameManager directly — communicates
-// through GameEvents so it compiles before the network layer exists.
 public class CardHandUI : MonoBehaviour
 {
     [Header("Prefab & Container")]
-    [SerializeField] private GameObject cardFrontPrefab;
-    [SerializeField] private Transform  handContainer;
+    [SerializeField] private GameObject      cardFrontPrefab;
+    [SerializeField] private Transform       handContainer;
 
-    private List<CardInstance> currentHand      = new();
+    // ── FIX D: add this field, then drag the "You: X card" TMP label ──
+    // into it in the Inspector on the LocalPlayerArea object.
+    [Header("UI Labels")]
+    [SerializeField] private TextMeshProUGUI cardCountLabel;
+
+    private List<CardInstance> currentHand     = new();
     private GameState          currentGameState;
     private bool               isLocalPlayerTurn;
 
@@ -21,14 +23,14 @@ public class CardHandUI : MonoBehaviour
 
     private void OnEnable()
     {
-        GameEvents.OnLocalHandUpdated  += OnHandUpdated;
-        GameEvents.OnGameStateUpdated  += OnGameStateUpdated;
+        GameEvents.OnLocalHandUpdated += OnHandUpdated;
+        GameEvents.OnGameStateUpdated += OnGameStateUpdated;
     }
 
     private void OnDisable()
     {
-        GameEvents.OnLocalHandUpdated  -= OnHandUpdated;
-        GameEvents.OnGameStateUpdated  -= OnGameStateUpdated;
+        GameEvents.OnLocalHandUpdated -= OnHandUpdated;
+        GameEvents.OnGameStateUpdated -= OnGameStateUpdated;
     }
 
     private void OnHandUpdated(List<CardInstance> hand)
@@ -50,9 +52,13 @@ public class CardHandUI : MonoBehaviour
             if (go != null) Destroy(go);
         cardObjects.Clear();
 
+        // ── FIX D: update the count label whenever the hand changes ──
+        if (cardCountLabel != null)
+            cardCountLabel.text = $"You:  {currentHand.Count} card{(currentHand.Count == 1 ? "" : "s")}";
+
         for (int i = 0; i < currentHand.Count; i++)
         {
-            int          index = i;          
+            int          index = i;
             CardInstance card  = currentHand[i];
 
             GameObject go = Instantiate(cardFrontPrefab, handContainer);
@@ -62,7 +68,6 @@ public class CardHandUI : MonoBehaviour
             if (cf != null)
             {
                 cf.Setup(card);
-                // Truyền thêm currentHand.Count vào đây
                 bool playable = isLocalPlayerTurn
                                 && CardValidator.IsLegal(card, currentGameState, currentHand.Count);
                 cf.SetPlayable(playable);
@@ -78,9 +83,7 @@ public class CardHandUI : MonoBehaviour
     {
         for (int i = 0; i < cardObjects.Count; i++)
         {
-            // THÊM DÒNG NÀY ĐỂ NGĂN CRASH KHI LỆCH NHỊP MẠNG:
             if (i >= currentHand.Count) continue;
-
             if (cardObjects[i] == null) continue;
             var cf = cardObjects[i].GetComponent<CardFront>();
             if (cf == null) continue;
@@ -111,12 +114,11 @@ public class CardHandUI : MonoBehaviour
 
     private bool IsMyTurn(GameState state)
     {
-        // Kiểm tra struct bằng playerCount thay vì Count hoặc null
         if (state.playerCount == 0) return false;
         if (state.currentPlayerIndex < 0 || state.currentPlayerIndex >= state.playerCount)
             return false;
 
-        // Dùng ID mạng (ulong) thay cho Auth ID (string)
-        return state.playerOrder[state.currentPlayerIndex] == NetworkManager.Singleton.LocalClientId;
+        return state.playerOrder[state.currentPlayerIndex]
+               == NetworkManager.Singleton.LocalClientId;
     }
 }

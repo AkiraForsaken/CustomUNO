@@ -11,7 +11,7 @@ public class LobbyManager : MonoBehaviour
 {
   public static LobbyManager Instance { get; private set; }
   public const int MAX_PLAYERS = 4;
-  public const int MIN_PLAYERS = 1;
+  public const int MIN_PLAYERS = 2;
 
   // The lobby data key for the relay join code
   private const string KEY_RELAY_JOIN_CODE = "RelayJoinCode";

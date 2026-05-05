@@ -120,8 +120,8 @@ public class GameManager : NetworkBehaviour
         currentState.phase = GamePhase.Playing; // CHUYỂN SANG TRẠNG THÁI CHƠI
 
         // 6. Gửi bài ẩn cho từng người và đồng bộ GameState
-        SyncAllPlayerHands();
         networkGameManager.SyncGameStateClientRpc(currentState);
+        SyncAllPlayerHands();
     }
 
     // Hàm hỗ trợ gửi bài riêng cho từng Client

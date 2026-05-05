@@ -89,17 +89,25 @@ public class GameUI : MonoBehaviour
         var players = LobbyManager.Instance.GetCurrentPlayers();
         if (players == null || players.Count == 0) return;
 
-        // Build player order and name map. Use the order provided by the Lobby.
-        var order = new List<string>();
-        var names = new Dictionary<string, string>();
-        var handCounts = new Dictionary<string, int>();
+        // Build player order and name map. Convert lobby string IDs to ulong where possible.
+        var order = new List<ulong>();
+        var names = new Dictionary<ulong, string>();
+        var handCounts = new Dictionary<ulong, int>();
 
-        foreach (var p in players)
+        for (int i = 0; i < players.Count; i++)
         {
-            order.Add(p.Id);
+            var p = players[i];
+            ulong id;
+            if (!ulong.TryParse(p.Id, out id))
+            {
+                // Fallback: synthesize a stable numeric id for editor/testing when Player.Id isn't numeric.
+                id = (ulong)(14680064 + i); // large offset to avoid colliding with real client ids
+            }
+
             string nm = p.Data != null && p.Data.ContainsKey("PlayerName") ? p.Data["PlayerName"].Value : "Player";
-            names[p.Id] = nm;
-            handCounts[p.Id] = 7; // placeholder until DeckManager assigns real hands
+            order.Add(id);
+            names[id] = nm;
+            handCounts[id] = 7; // placeholder until DeckManager assigns real hands
         }
 
         InitializeGame(order, names, handCounts);
@@ -128,6 +136,31 @@ public class GameUI : MonoBehaviour
             if (id != localId) opponentIds.Add(id);
 
         AssignOpponentSlots();
+    }
+
+    // Overload used by the lobby-fallback which also provides initial hand counts.
+    public void InitializeGame(List<ulong> playerOrder, Dictionary<ulong, string> names, Dictionary<ulong, int> handCounts)
+    {
+        playerNames = names;
+        ulong localId = NetworkManager.Singleton != null ? NetworkManager.Singleton.LocalClientId : 0ul;
+
+        opponentIds.Clear();
+        foreach (ulong id in playerOrder)
+            if (id != localId) opponentIds.Add(id);
+
+        AssignOpponentSlots();
+
+        if (handCounts != null)
+        {
+            foreach (var slot in opponentSlots)
+            {
+                if (!slot.gameObject.activeSelf) continue;
+                if (handCounts.TryGetValue(slot.AssignedPlayerId, out int cnt))
+                {
+                    slot.Refresh(cnt);
+                }
+            }
+        }
     }
 
     private void AssignOpponentSlots()

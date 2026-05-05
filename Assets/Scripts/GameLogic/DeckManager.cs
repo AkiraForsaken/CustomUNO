@@ -37,9 +37,6 @@ public class DeckManager : MonoBehaviour
         discardPile.Add(card);
     }
 
-    /// <summary>
-    /// Xử lý Edge Case: Lấy Discard Pile xào lại làm Draw Pile, giữ lại lá trên cùng.
-    /// </summary>
     private void ReshuffleDiscardIntoDraw()
     {
         // Cần ít nhất 2 lá trong chồng bài vứt để có thể xào lại (1 lá giữ lại, 1 lá xào)
@@ -61,9 +58,6 @@ public class DeckManager : MonoBehaviour
         Debug.Log("Draw pile đã cạn. Đã xào lại Discard pile thành Draw pile mới.");
     }
 
-    /// <summary>
-    /// Thuật toán Fisher-Yates để trộn bài
-    /// </summary>
     public void ShuffleDeck(List<CardInstance> deck)
     {
         for (int i = deck.Count - 1; i > 0; i--)
@@ -75,9 +69,6 @@ public class DeckManager : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Khởi tạo bộ bài UNO chuẩn 108 lá và xào bài
-    /// </summary>
     public void BuildStandardDeck()
     {
         drawPile.Clear();
@@ -117,7 +108,7 @@ public class DeckManager : MonoBehaviour
 
         // Khởi tạo xong 108 lá thì tiến hành xào bài luôn
         ShuffleDeck(drawPile);
-        Debug.Log($"[DeckManager] Đã khởi tạo và xào bộ bài chuẩn với {drawPile.Count} lá!");
+        // Debug.Log($"[DeckManager] Đã khởi tạo và xào bộ bài chuẩn với {drawPile.Count} lá!");
     }
 
     // Ghi chú: Hàm BuildStandardDeck() khởi tạo 108 lá bài từ CardData sẽ được gọi bởi GameManager 
