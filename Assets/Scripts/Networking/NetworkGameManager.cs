@@ -208,14 +208,24 @@ public class NetworkGameManager : NetworkBehaviour
         GameManager.Instance.ReceiveReaction(clientId);
     }
 
-    private void HandleUnoCalled()
+    [ClientRpc]
+    public void SyncAllPlayerNamesClientRpc(ulong[] ids, string joinedNames)
     {
-        RequestUnoServerRpc(NetworkManager.Singleton.LocalClientId);
-    }
+        // Cắt chuỗi gộp ra lại thành danh sách tên bằng dấu |
+        string[] names = joinedNames.Split('|');
 
-    [ServerRpc(RequireOwnership = false)]
-    public void RequestUnoServerRpc(ulong callerId)
-    {
-        GameManager.Instance.ReceiveUnoCalled(callerId);
+        Dictionary<ulong, string> nameMap = new Dictionary<ulong, string>();
+        for (int i = 0; i < ids.Length; i++)
+        {
+            // Tránh lỗi nếu mảng tên bị thiếu
+            nameMap[ids[i]] = (i < names.Length) ? names[i] : "Player"; 
+        }
+
+        // Cập nhật vào UI
+        var ui = FindObjectOfType<GameUI>();
+        if (ui != null)
+        {
+            ui.UpdatePlayerNames(nameMap);
+        }
     }
 }

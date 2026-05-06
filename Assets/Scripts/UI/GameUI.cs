@@ -292,23 +292,33 @@ public class GameUI : MonoBehaviour
 
     private void HandlePhaseChange(GameState state)
     {
-        colorPickerPanel.SetActive(state.phase == GamePhase.ColorSelection);
+        // 1. Lấy ID của máy hiện tại và ID của người đang đến lượt
+        ulong localId = NetworkManager.Singleton.LocalClientId;
+        bool isMyTurn = state.playerOrder[state.currentPlayerIndex] == localId;
+
+        // 2. Chỉ hiện bảng chọn màu cho chính người đánh lá Wild
+        colorPickerPanel.SetActive(state.phase == GamePhase.ColorSelection && isMyTurn);
         
-        // Bảng chọn người hiện khi đánh lá 7
+        // 3. Rule 7: Chỉ hiện bảng chọn người cho chính người đánh lá 7 [cite: 77, 80]
         if (targetPickerPanel != null)
         {
-            targetPickerPanel.SetActive(state.phase == GamePhase.TargetSelection);
+            bool showTargetPicker = (state.phase == GamePhase.TargetSelection && isMyTurn);
+            targetPickerPanel.SetActive(showTargetPicker);
             
-            // Cập nhật thông tin vào nút bấm nếu bảng này đang bật
-            if (state.phase == GamePhase.TargetSelection)
+            if (showTargetPicker)
             {
                 SetupTargetButtons();
             }
         }
+
+        // 4. Rule 0: Chỉ hiện bảng chọn hướng cho chính người đánh lá 0 [cite: 68, 74]
         if (directionPickerPanel != null)
         {
-            directionPickerPanel.SetActive(state.phase == GamePhase.DirectionSelection);
+            directionPickerPanel.SetActive(state.phase == GamePhase.DirectionSelection && isMyTurn);
         }
+
+        // 5. Rule 8 (Reaction): HIỆN CHO TẤT CẢ MỌI NGƯỜI
+        // Vì đặc tả yêu cầu tất cả người chơi phải bấm nút phản xạ 
         if (reactionPanel != null) 
         {
             reactionPanel.SetActive(state.phase == GamePhase.ReactionEvent);
@@ -441,5 +451,20 @@ public class GameUI : MonoBehaviour
     {
         directionPickerPanel.SetActive(false);
         GameEvents.RaisePassDirectionChosen(isClockwise);
+    }
+
+    // Thêm hàm này vào GameUI.cs
+    public void UpdatePlayerNames(Dictionary<ulong, string> names)
+    {
+        this.playerNames = names;
+        
+        // Cập nhật lại các ô hiển thị đối thủ (Top, Left, Right)
+        AssignOpponentSlots();
+        
+        // Buộc UI cập nhật lại văn bản lượt đi (để mất chữ ...'s turn)
+        if (GameManager.Instance != null)
+        {
+            UpdateTurnIndicator(GameManager.Instance.currentState);
+        }
     }
 }
