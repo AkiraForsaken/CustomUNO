@@ -7,6 +7,7 @@ public enum GamePhase
     Playing,
     ColorSelection,
     TargetSelection, // Rule of 7
+    DirectionSelection, // Rule of 0
     ReactionEvent,   // Rule of 8
     GameOver
 }
@@ -28,6 +29,7 @@ public struct GameState : INetworkSerializable
     public CardInstance topCard; 
     public CardColor activeColor; 
     public int pendingPenalty; 
+    public ulong unoVulnerableId;   // 0 = nobody vulnerable
     public GamePhase phase;
     
     // Vì không dùng Dictionary được, ta dùng mảng số lượng bài tương ứng với thứ tự trong playerOrder
@@ -63,5 +65,6 @@ public struct GameState : INetworkSerializable
         serializer.SerializeValue(ref activeColor);
         serializer.SerializeValue(ref pendingPenalty);
         serializer.SerializeValue(ref phase);
+        serializer.SerializeValue(ref unoVulnerableId);
     }
 }

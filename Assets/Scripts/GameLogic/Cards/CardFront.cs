@@ -63,9 +63,9 @@ public class CardFront : MonoBehaviour
         string name = card.type switch
         {
             CardType.Number       => $"_{card.number}",
-            CardType.Skip         => "_skip",
-            CardType.Reverse      => "_reverse",
-            CardType.DrawTwo      => "_drawtwo",
+            CardType.Skip         => "_interdit",   // Đảm bảo đã sửa thành tên này
+            CardType.Reverse      => "_revers",     // Đảm bảo đã sửa thành tên này
+            CardType.DrawTwo      => "_draw2",      // Đảm bảo đã sửa thành tên này
             CardType.Wild         => "_wild",
             CardType.WildDrawFour => "_wild_draw",
             _                     => "_0"

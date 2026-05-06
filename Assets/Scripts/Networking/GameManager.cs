@@ -15,6 +15,9 @@ public class GameManager : NetworkBehaviour
     private Dictionary<ulong, List<CardInstance>> playerHands = new Dictionary<ulong, List<CardInstance>>();
     
     public GameState currentState;
+    // Dùng cho Luật 8
+    private List<ulong> reactedPlayers = new List<ulong>();
+    private Coroutine reactionCoroutine;
 
     private void Awake()
     {
@@ -22,59 +25,17 @@ public class GameManager : NetworkBehaviour
         Instance = this;
     }
 
-    // // Bắt đầu game (gọi khi Lobby đã đầy và Host ấn Start)
-    // public void StartGame(List<ulong> connectedClients)
-    // {
-    //     if (!IsServer) return; // Chỉ Host mới có quyền Start
-
-    //     // Khởi tạo GameState
-    //     currentState = new GameState
-    //     {
-    //         playerOrder = new ulong[GameState.MAX_PLAYERS],
-    //         handCounts = new int[GameState.MAX_PLAYERS],
-    //         playerCount = connectedClients.Count,
-    //         currentPlayerIndex = 0,
-    //         isClockwise = true,
-    //         phase = GamePhase.Playing,
-    //         pendingPenalty = 0
-    //     };
-
-    //     for (int i = 0; i < connectedClients.Count; i++)
-    //     {
-    //         currentState.playerOrder[i] = connectedClients[i];
-    //         playerHands[connectedClients[i]] = new List<CardInstance>();
-    //     }
-
-    //     // 1. Trộn bài
-    //     deckManager.ShuffleDeck(deckManager.drawPile);
-
-    //     // 2. Chia bài (mỗi người 7 lá)
-    //     foreach (var clientId in connectedClients)
-    //     {
-    //         for (int i = 0; i < 7; i++)
-    //         {
-    //             playerHands[clientId].Add(deckManager.DrawCard());
-    //         }
-    //     }
-
-    //     // 3. Lật lá đầu tiên (Giả định lá đầu không phải Action Card cho đơn giản)
-    //     CardInstance firstCard = deckManager.DrawCard();
-    //     currentState.topCard = firstCard;
-    //     currentState.activeColor = firstCard.color;
-    //     deckManager.DiscardCard(firstCard);
-
-    //     UpdateHandCounts();
-    //     BroadcastState();
-    // }
-
-    // Đảm bảo có using Unity.Netcode; ở đầu file
     public void StartMatch()
     {
         // 1. Chỉ Host mới có quyền chia bài
         if (!NetworkManager.Singleton.IsServer) return;
 
         // 2. Lấy danh sách ID của những người đã kết nối
-        var clients = NetworkManager.Singleton.ConnectedClientsIds;
+        // var clients = NetworkManager.Singleton.ConnectedClientsIds;
+        var clients = new List<ulong>(NetworkManager.Singleton.ConnectedClientsIds);
+        if (BotManager.Instance != null) 
+            clients.AddRange(BotManager.Instance.GetActiveBotIds());
+
         currentState.playerCount = clients.Count;
         currentState.playerOrder = new ulong[GameState.MAX_PLAYERS];
         currentState.handCounts = new int[GameState.MAX_PLAYERS];
@@ -84,9 +45,11 @@ public class GameManager : NetworkBehaviour
 
         for (int i = 0; i < clients.Count; i++)
         {
-            ulong clientId = clients[i];
-            currentState.playerOrder[i] = clientId;
-            playerHands[clientId] = new List<CardInstance>();
+            // ulong clientId = clients[i];
+            // currentState.playerOrder[i] = clientId;
+            // playerHands[clientId] = new List<CardInstance>();
+            currentState.playerOrder[i] = clients[i];
+            playerHands[clients[i]] = new List<CardInstance>();
         }
 
         // 3. Xào bài và chia mỗi người 7 lá
@@ -152,6 +115,8 @@ public class GameManager : NetworkBehaviour
     public void TryPlayCard(ulong clientId, CardInstance card)
     {
         if (!IsServer || currentState.phase != GamePhase.Playing) return;
+        if (currentState.unoVulnerableId != 0 && currentState.unoVulnerableId != clientId)
+            currentState.unoVulnerableId = 0;
 
         // 1. Kiểm tra Turn: Nếu không đúng lượt, từ chối
         if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
@@ -175,6 +140,8 @@ public class GameManager : NetworkBehaviour
         currentState.activeColor = card.color; 
         deckManager.DiscardCard(card);
 
+        if (hand.Count == 1) currentState.unoVulnerableId = clientId;
+
         // 4. Kiểm tra chiến thắng
         if (WinChecker.HasWon(hand.Count))
         {
@@ -196,6 +163,21 @@ public class GameManager : NetworkBehaviour
         {
             currentState.phase = GamePhase.ColorSelection;
             // Dừng ở đây, KHÔNG gọi TurnManager.NextPlayer
+        }
+        else if (card.type == CardType.Number && card.number == 7)
+        {
+            // Tạm dừng game, chuyển sang trạng thái chờ người chơi chọn mục tiêu
+            currentState.phase = GamePhase.TargetSelection; 
+        }
+        else if (card.type == CardType.Number && card.number == 0)
+        {
+            // Tạm dừng game, chờ người đánh chọn hướng chuyền bài
+            currentState.phase = GamePhase.DirectionSelection; 
+        }
+        else if (card.type == CardType.Number && card.number == 8)
+        {
+            // Kích hoạt sự kiện đếm ngược
+            StartReactionEvent(); 
         }
         else 
         {
@@ -227,10 +209,74 @@ public class GameManager : NetworkBehaviour
         BroadcastState();
     }
 
+    // Xử lý khi người chơi đã chọn xong người để đổi bài (Luật lá 7)
+    public void ReceiveTargetChoice(ulong clientId, ulong targetId)
+    {
+        if (!IsServer || currentState.phase != GamePhase.TargetSelection) return;
+
+        // Chỉ người vừa đánh lá 7 mới được quyền yêu cầu đổi
+        if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
+
+        // Chống hack: Không được tự đổi với chính mình, và mục tiêu phải tồn tại trong phòng
+        if (clientId == targetId || !playerHands.ContainsKey(targetId)) return; 
+
+        // 1. Thực hiện phép THUẬT hoán đổi 2 danh sách bài
+        List<CardInstance> tempHand = playerHands[clientId];
+        playerHands[clientId] = playerHands[targetId];
+        playerHands[targetId] = tempHand;
+
+        // 2. Trả game về trạng thái bình thường
+        currentState.phase = GamePhase.Playing;
+
+        // 3. Chuyển lượt đi cho người tiếp theo
+        TurnManager.NextPlayer(ref currentState);
+        
+        // 4. Cập nhật và gửi trạng thái mới cho toàn bộ phòng
+        UpdateHandCounts();
+        BroadcastState();
+    }
+
+    // Xử lý khi người chơi đã chọn hướng chuyền bài (Luật lá 0)
+    public void ReceivePassDirectionChoice(ulong clientId, bool passClockwise)
+    {
+        if (!IsServer || currentState.phase != GamePhase.DirectionSelection) return;
+        if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
+
+        int count = currentState.playerCount;
+        if (count > 1)
+        {
+            // Copy danh sách bài hiện tại ra một mảng tạm để lúc chuyền không bị đè mất dữ liệu
+            List<CardInstance>[] tempHands = new List<CardInstance>[count];
+            for(int i = 0; i < count; i++) 
+            {
+                tempHands[i] = playerHands[currentState.playerOrder[i]];
+            }
+
+            // Chuyền bài
+            for (int i = 0; i < count; i++)
+            {
+                ulong currentId = currentState.playerOrder[i];
+                // Tính toán xem mình sẽ nhận bài từ ai (người bên trái hay bên phải)
+                int fromIndex = passClockwise 
+                                ? (i - 1 + count) % count 
+                                : (i + 1) % count;
+                playerHands[currentId] = tempHands[fromIndex];
+            }
+        }
+
+        currentState.phase = GamePhase.Playing;
+        TurnManager.NextPlayer(ref currentState);
+        
+        UpdateHandCounts();
+        BroadcastState();
+    }
+
     // Xử lý Client yêu cầu rút bài
     public void TryDrawCard(ulong clientId)
     {
         if (!IsServer || currentState.phase != GamePhase.Playing) return;
+        if (currentState.unoVulnerableId != 0 && currentState.unoVulnerableId != clientId)
+            currentState.unoVulnerableId = 0;
         if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
 
         // Nếu đang gánh Penalty do Stacking, phải rút TẤT CẢ
@@ -246,10 +292,20 @@ public class GameManager : NetworkBehaviour
         else
         {
             // Rút 1 lá bình thường (Theo chuẩn, nếu rút xong đánh được thì cho phép đánh ngay, 
-            // hiện tại ta thiết kế rút xong là mất lượt để xử lý luồng mạng ổn định trước)
             CardInstance drawn = deckManager.DrawCard();
             playerHands[clientId].Add(drawn);
-            TurnManager.NextPlayer(ref currentState);
+
+            // Kiểm tra xem lá vừa rút có hợp lệ để đánh không
+            if (CardValidator.IsLegal(drawn, currentState, playerHands[clientId].Count))
+            {
+                // Nếu đánh được: Giữ nguyên lượt (Không gọi TurnManager.NextPlayer)
+                // Người chơi có thể click vào lá bài vừa rút trên màn hình để đánh xuống.
+            }
+            else
+            {
+                // Nếu không đánh được: Mất lượt
+                TurnManager.NextPlayer(ref currentState);
+            }
         }
 
         UpdateHandCounts();
@@ -291,5 +347,170 @@ public class GameManager : NetworkBehaviour
         {
             networkGameManager.SyncPrivateHand(kvp.Key, kvp.Value);
         }
+
+        TriggerBotTurnIfNeeded();
+    }
+
+    private void StartReactionEvent()
+    {
+        currentState.phase = GamePhase.ReactionEvent;
+        reactedPlayers.Clear();
+        BroadcastState(); // Gửi tín hiệu để UI mọi người hiện nút React
+
+        // Bắt đầu đếm ngược 3 giây
+        if (reactionCoroutine != null) StopCoroutine(reactionCoroutine);
+        reactionCoroutine = StartCoroutine(ReactionTimerRoutine());
+    }
+
+    private System.Collections.IEnumerator ReactionTimerRoutine()
+    {
+        yield return new WaitForSeconds(3f); // Chờ 3 giây
+        ResolveReactionEvent(); // Hết giờ thì phân xử
+    }
+
+    public void ReceiveReaction(ulong clientId)
+    {
+        if (!IsServer || currentState.phase != GamePhase.ReactionEvent) return;
+
+        // Nếu người này chưa bấm thì ghi tên vào danh sách
+        if (!reactedPlayers.Contains(clientId))
+        {
+            reactedPlayers.Add(clientId);
+        }
+
+        // Nếu TẤT CẢ mọi người (cả host và client) đều đã bấm xong trước khi hết 3 giây
+        if (reactedPlayers.Count >= currentState.playerCount)
+        {
+            if (reactionCoroutine != null) StopCoroutine(reactionCoroutine);
+            ResolveReactionEvent();
+        }
+    }
+
+    private void ResolveReactionEvent()
+    {
+        List<ulong> losers = new List<ulong>();
+
+        // Phân xử: Ai là kẻ chậm nhất?
+        if (reactedPlayers.Count < currentState.playerCount)
+        {
+            // Trường hợp 1: Có người KHÔNG thèm bấm -> Những người không có tên bị phạt
+            for (int i = 0; i < currentState.playerCount; i++)
+            {
+                ulong id = currentState.playerOrder[i];
+                if (!reactedPlayers.Contains(id)) losers.Add(id);
+            }
+        }
+        else
+        {
+            // Trường hợp 2: Ai cũng bấm -> Kẻ bấm cuối cùng trong danh sách bị phạt
+            losers.Add(reactedPlayers[reactedPlayers.Count - 1]);
+        }
+
+        // Phạt kẻ thua cuộc rút 2 lá
+        foreach (ulong loserId in losers)
+        {
+            playerHands[loserId].Add(deckManager.DrawCard());
+            playerHands[loserId].Add(deckManager.DrawCard());
+        }
+
+        // Dọn dẹp và đi tiếp
+        reactedPlayers.Clear();
+        currentState.phase = GamePhase.Playing;
+        TurnManager.NextPlayer(ref currentState);
+        
+        UpdateHandCounts();
+        BroadcastState();
+    }
+
+    public void ReceiveUnoCalled(ulong callerId)
+    {
+        if (!IsServer) return;
+
+        ulong vulnerable = currentState.unoVulnerableId;
+        if (vulnerable == 0) return; // window already closed, ignore
+
+        if (callerId == vulnerable)
+        {
+            // Player called UNO on themselves in time — safe
+            currentState.unoVulnerableId = 0;
+        }
+        else
+        {
+            // Another player caught them — penalize the vulnerable player
+            playerHands[vulnerable].Add(deckManager.DrawCard());
+            playerHands[vulnerable].Add(deckManager.DrawCard());
+            currentState.unoVulnerableId = 0;
+            UpdateHandCounts();
+        }
+
+        BroadcastState();
+    }
+
+    private void TriggerBotTurnIfNeeded()
+    {
+        if (currentState.phase != GamePhase.Playing) return;
+        ulong currentId = TurnManager.GetCurrentPlayerId(ref currentState);
+        if (BotManager.Instance != null && BotManager.Instance.IsBot(currentId))
+            StartCoroutine(BotTurnRoutine(currentId));
+    }
+
+    private System.Collections.IEnumerator BotTurnRoutine(ulong botId)
+    {
+        yield return new WaitForSeconds(1.2f); // Simulate thinking
+        ExecuteBotTurn(botId);
+    }
+
+    private void ExecuteBotTurn(ulong botId)
+    {
+        if (!IsServer) return;
+        // Re-validate: still this bot's turn? (state may have changed)
+        if (TurnManager.GetCurrentPlayerId(ref currentState) != botId) return;
+
+        List<CardInstance> hand = playerHands[botId];
+
+        // Find all legal cards
+        var legalCards = new List<CardInstance>();
+        foreach (var card in hand)
+            if (CardValidator.IsLegal(card, currentState, hand.Count))
+                legalCards.Add(card);
+
+        if (legalCards.Count > 0)
+        {
+            // Play a random legal card
+            CardInstance chosen = legalCards[Random.Range(0, legalCards.Count)];
+
+            // If it's a Wild, pre-pick the color with the most cards in hand
+            if (chosen.type == CardType.Wild || chosen.type == CardType.WildDrawFour)
+            {
+                TryPlayCard(botId, chosen);
+                // After TryPlayCard, phase will be ColorSelection — resolve it immediately
+                CardColor bestColor = PickBestColor(hand);
+                ReceiveColorChoice(botId, bestColor);
+            }
+            else
+            {
+                TryPlayCard(botId, chosen);
+            }
+        }
+        else
+        {
+            // No legal card — draw
+            TryDrawCard(botId);
+        }
+    }
+
+    private CardColor PickBestColor(List<CardInstance> hand)
+    {
+        int[] counts = new int[4]; // Red, Green, Blue, Yellow
+        foreach (var c in hand)
+        {
+            if (c.color == CardColor.Red)    counts[0]++;
+            if (c.color == CardColor.Green)  counts[1]++;
+            if (c.color == CardColor.Blue)   counts[2]++;
+            if (c.color == CardColor.Yellow) counts[3]++;
+        }
+        int best = 0;
+        for (int i = 1; i < 4; i++) if (counts[i] > counts[best]) best = i;
+        return (CardColor)best;
     }
 }

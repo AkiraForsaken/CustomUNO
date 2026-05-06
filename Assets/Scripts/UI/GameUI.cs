@@ -6,6 +6,7 @@ using UnityEngine.UI;
 using TMPro;
 using Unity.Services.Lobbies.Models;
 using System.Linq;
+using UnityEngine.SceneManagement;
 
 public class GameUI : MonoBehaviour
 {
@@ -15,7 +16,7 @@ public class GameUI : MonoBehaviour
     [SerializeField] private OpponentUI opponentRight;
 
     [Header("Center Area")]
-    [SerializeField] private Image            topCardImage;
+    [SerializeField] private CardFront        topCard;
     [SerializeField] private Image            activeColorRing;   
     [SerializeField] private TextMeshProUGUI  currentColorText;  
     [SerializeField] private TextMeshProUGUI  pileCountText;
@@ -32,6 +33,21 @@ public class GameUI : MonoBehaviour
     [SerializeField] private Button     colorGreen;
     [SerializeField] private Button     colorBlue;
     [SerializeField] private Button     colorYellow;
+
+    [Header("Target Picker (Rule 7)")]
+    [SerializeField] private GameObject targetPickerPanel;
+    [SerializeField] private Button target1Button; 
+    [SerializeField] private Button target2Button;
+    [SerializeField] private Button target3Button;
+
+    [Header("Direction Picker (Rule 0)")]
+    [SerializeField] private GameObject directionPickerPanel;
+    [SerializeField] private Button     clockwiseButton;        // Nút Cùng chiều
+    [SerializeField] private Button     counterClockwiseButton; // Nút Ngược chiều
+
+    [Header("Reaction Event (Rule 8)")]
+    [SerializeField] private GameObject reactionPanel;
+    [SerializeField] private Button     reactButton;
 
     [Header("Game Over")]
     [SerializeField] private GameObject      gameOverPanel;
@@ -72,6 +88,16 @@ public class GameUI : MonoBehaviour
         if (drawPileButton != null)
             drawPileButton.onClick.AddListener(() => GameEvents.RaiseDrawCardRequested());
 
+        if (clockwiseButton != null) 
+            clockwiseButton.onClick.AddListener(() => ChooseDirection(true));
+        
+        if (counterClockwiseButton != null) 
+            counterClockwiseButton.onClick.AddListener(() => ChooseDirection(false));
+        
+        if (reactButton != null)
+        {
+            reactButton.onClick.AddListener(OnReactButtonClicked);
+        }
         // Fallback: if the networking layer didn't call InitializeGame,
         // try to populate player names from the LobbyManager so UI shows names during testing.
         TryInitializeFromLobbyIfNeeded();
@@ -184,6 +210,11 @@ public class GameUI : MonoBehaviour
     {
         if (state.playerCount == 0) return; // Check count thay vì null
 
+        if (opponentIds.Count != state.playerCount - 1 || !playerNames.ContainsKey(state.playerOrder[0]))
+        {
+            AutoSyncPlayers(state);
+        }
+
         UpdateTopCard(state);
         UpdateDirection(state);
         UpdateTurnIndicator(state);
@@ -193,19 +224,13 @@ public class GameUI : MonoBehaviour
 
     private void UpdateTopCard(GameState state)
     {
-        string symbolName = state.topCard.type switch
+        // 1. Gọi Setup để nó tự đắp phôi bài và Icon lên (thay cho đoạn switch rườm rà cũ)
+        if (topCard != null) 
         {
-            CardType.Number       => $"_{state.topCard.number}",
-            CardType.Skip         => "_interdit",   // Đã sửa
-            CardType.Reverse      => "_revers",     // Đã sửa
-            CardType.DrawTwo      => "_draw2",      // Đã sửa
-            CardType.Wild         => "_wild",
-            CardType.WildDrawFour => "_wild_draw",
-            _                     => "_0"
-        };
-        var symbol = Resources.Load<Sprite>($"CardSymbols/{symbolName}");
-        if (symbol != null && topCardImage != null) topCardImage.sprite = symbol;
+            topCard.Setup(state.topCard);
+        }
 
+        // 2. GIỮ NGUYÊN đoạn code kiểm tra lá Wild để hiện chữ thông báo màu trên bàn chơi
         bool wildActive = state.topCard.type == CardType.Wild
                        || state.topCard.type == CardType.WildDrawFour;
         if (currentColorText != null)
@@ -268,6 +293,33 @@ public class GameUI : MonoBehaviour
     private void HandlePhaseChange(GameState state)
     {
         colorPickerPanel.SetActive(state.phase == GamePhase.ColorSelection);
+        
+        // Bảng chọn người hiện khi đánh lá 7
+        if (targetPickerPanel != null)
+        {
+            targetPickerPanel.SetActive(state.phase == GamePhase.TargetSelection);
+            
+            // Cập nhật thông tin vào nút bấm nếu bảng này đang bật
+            if (state.phase == GamePhase.TargetSelection)
+            {
+                SetupTargetButtons();
+            }
+        }
+        if (directionPickerPanel != null)
+        {
+            directionPickerPanel.SetActive(state.phase == GamePhase.DirectionSelection);
+        }
+        if (reactionPanel != null) 
+        {
+            reactionPanel.SetActive(state.phase == GamePhase.ReactionEvent);
+        }
+    }
+
+    private void OnReactButtonClicked()
+    {
+        // Bấm xong thì ẩn nút đi luôn để tránh spam click
+        reactionPanel.SetActive(false); 
+        GameEvents.RaiseReactionClicked();
     }
 
     private void WireColorPickerButtons()
@@ -299,6 +351,7 @@ public class GameUI : MonoBehaviour
     private void OnBackToMenuClicked()
     {
         NetworkManager.Singleton.Shutdown();
+        SceneManager.LoadScene("MainMenu");
     }
 
     private Sprite GetRingSprite(CardColor color) => color switch
@@ -313,5 +366,80 @@ public class GameUI : MonoBehaviour
     public void SetDrawPileCount(int count)
     {
         if (pileCountText != null) pileCountText.text = count.ToString();
+    }
+
+    private void AutoSyncPlayers(GameState state)
+    {
+        ulong localId = NetworkManager.Singleton.LocalClientId;
+        playerNames.Clear();
+        opponentIds.Clear();
+
+        // Lấy danh sách tên từ Lobby (nếu có)
+        var lobbyPlayers = LobbyManager.Instance?.GetCurrentPlayers();
+
+        // Dùng danh sách ID mạng CHUẨN XÁC từ GameState
+        for (int i = 0; i < state.playerCount; i++)
+        {
+            ulong netId = state.playerOrder[i];
+            string name = $"Player {i + 1}";
+
+            // Lắp tên vào đúng người
+            if (lobbyPlayers != null && i < lobbyPlayers.Count)
+            {
+                var lp = lobbyPlayers[i];
+                if (lp.Data != null && lp.Data.ContainsKey("PlayerName"))
+                    name = lp.Data["PlayerName"].Value;
+            }
+
+            playerNames[netId] = name;
+            
+            // Nếu không phải bản thân mình thì thêm vào danh sách đối thủ
+            if (netId != localId) 
+            {
+                opponentIds.Add(netId);
+            }
+        }
+        AssignOpponentSlots();
+    }
+
+    private void SetupTargetButtons()
+    {
+        // Tắt hết các nút trước
+        target1Button.gameObject.SetActive(false);
+        target2Button.gameObject.SetActive(false);
+        target3Button.gameObject.SetActive(false);
+
+        Button[] btnArray = { target1Button, target2Button, target3Button };
+
+        // Duyệt qua danh sách đối thủ (opponentIds đã có sẵn trong GameUI)
+        for (int i = 0; i < opponentIds.Count; i++)
+        {
+            if (i >= btnArray.Length) break;
+
+            ulong targetId = opponentIds[i];
+            string tName = playerNames.TryGetValue(targetId, out string n) ? n : "Player";
+            
+            // Đổi chữ trên nút thành tên đối thủ
+            var textUI = btnArray[i].GetComponentInChildren<TextMeshProUGUI>();
+            if (textUI != null) textUI.text = tName;
+
+            // Xóa sự kiện cũ và gắn sự kiện mới để khi bấm thì gửi đúng ID của người đó
+            btnArray[i].onClick.RemoveAllListeners();
+            btnArray[i].onClick.AddListener(() => ChooseTarget(targetId));
+            
+            btnArray[i].gameObject.SetActive(true);
+        }
+    }
+
+    private void ChooseTarget(ulong targetId)
+    {
+        targetPickerPanel.SetActive(false);
+        GameEvents.RaiseTargetChosen(targetId);
+    }
+
+    private void ChooseDirection(bool isClockwise)
+    {
+        directionPickerPanel.SetActive(false);
+        GameEvents.RaisePassDirectionChosen(isClockwise);
     }
 }

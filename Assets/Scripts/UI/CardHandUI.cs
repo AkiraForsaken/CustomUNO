@@ -52,9 +52,9 @@ public class CardHandUI : MonoBehaviour
             if (go != null) Destroy(go);
         cardObjects.Clear();
 
-        // ── FIX D: update the count label whenever the hand changes ──
+        // ── update the count label whenever the hand changes ──
         if (cardCountLabel != null)
-            cardCountLabel.text = $"You:  {currentHand.Count} card{(currentHand.Count == 1 ? "" : "s")}";
+            cardCountLabel.text = $"{currentHand.Count} card{(currentHand.Count == 1 ? "" : "s")}";
 
         for (int i = 0; i < currentHand.Count; i++)
         {

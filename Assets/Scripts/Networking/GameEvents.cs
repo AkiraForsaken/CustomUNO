@@ -28,6 +28,12 @@ public static class GameEvents
 
     // Local player chose a color after playing Wild
     public static event Action<CardColor> OnColorChosen;
+    
+    // Custom Rules Events
+    public static event Action<ulong> OnTargetChosen; // Rule 7
+    public static event Action<bool> OnPassDirectionChosen; // Rule 0
+    public static event Action OnReactionClicked; // Rule 8
+
     public static event Action OnUnoCalled;
     public static event Action OnUnoMissed;
 
@@ -40,6 +46,9 @@ public static class GameEvents
     public static void RaisePlayCardRequested(CardInstance card) => OnPlayCardRequested?.Invoke(card);
     public static void RaiseDrawCardRequested() => OnDrawCardRequested?.Invoke();
     public static void RaiseColorChosen(CardColor color) => OnColorChosen?.Invoke(color);
+    public static void RaiseTargetChosen(ulong targetId) => OnTargetChosen?.Invoke(targetId);
+    public static void RaisePassDirectionChosen(bool isClockwise) => OnPassDirectionChosen?.Invoke(isClockwise);
+    public static void RaiseReactionClicked() => OnReactionClicked?.Invoke();
     public static void RaiseUnoCalled() => OnUnoCalled?.Invoke();
     public static void RaiseUnoMissed() => OnUnoMissed?.Invoke();
 }

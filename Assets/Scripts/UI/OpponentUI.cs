@@ -38,7 +38,7 @@ public class OpponentUI : MonoBehaviour
     private void RebuildCardBacks(int count)
     {
         ClearCardBacks();
-        int display = Mathf.Min(count, 10);
+        int display = Mathf.Min(count, 7);
         for (int i = 0; i < display; i++)
             Instantiate(cardBackPrefab, cardContainer);
     }
