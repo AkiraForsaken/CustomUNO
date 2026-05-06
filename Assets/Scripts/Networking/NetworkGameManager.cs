@@ -205,4 +205,25 @@ public class NetworkGameManager : NetworkBehaviour
     {
         GameManager.Instance.ReceiveReaction(clientId);
     }
+
+    [ClientRpc]
+    public void SyncAllPlayerNamesClientRpc(ulong[] ids, string joinedNames)
+    {
+        // Cắt chuỗi gộp ra lại thành danh sách tên bằng dấu |
+        string[] names = joinedNames.Split('|');
+
+        Dictionary<ulong, string> nameMap = new Dictionary<ulong, string>();
+        for (int i = 0; i < ids.Length; i++)
+        {
+            // Tránh lỗi nếu mảng tên bị thiếu
+            nameMap[ids[i]] = (i < names.Length) ? names[i] : "Player"; 
+        }
+
+        // Cập nhật vào UI
+        var ui = FindObjectOfType<GameUI>();
+        if (ui != null)
+        {
+            ui.UpdatePlayerNames(nameMap);
+        }
+    }
 }

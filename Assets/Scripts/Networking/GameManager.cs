@@ -26,60 +26,95 @@ public class GameManager : NetworkBehaviour
     }
 
     public void StartMatch()
+{
+    // 1. Chỉ Host/Server mới có quyền điều phối trận đấu
+    if (!NetworkManager.Singleton.IsServer) return;
+
+    // 2. Lấy danh sách ID của những người đã kết nối thực tế qua mạng
+    var clients = NetworkManager.Singleton.ConnectedClientsIds;
+    int connectedCount = clients.Count;
+
+    // Khởi tạo GameState cơ bản [cite: 11]
+    currentState.playerCount = connectedCount;
+    currentState.playerOrder = new ulong[GameState.MAX_PLAYERS];
+    currentState.handCounts = new int[GameState.MAX_PLAYERS];
+    
+    // Xóa dữ liệu cũ trên Host
+    playerHands.Clear();
+
+    // Chuẩn bị danh sách để đồng bộ tên qua mạng
+    List<ulong> idsList = new List<ulong>();
+    List<string> namesList = new List<string>();
+
+    // Lấy thông tin người chơi từ LobbyManager (nếu có) 
+    var lobbyPlayers = LobbyManager.Instance?.GetCurrentPlayers();
+
+    for (int i = 0; i < connectedCount; i++)
     {
-        // 1. Chỉ Host mới có quyền chia bài
-        if (!NetworkManager.Singleton.IsServer) return;
+        ulong clientId = clients[i];
+        currentState.playerOrder[i] = clientId;
+        playerHands[clientId] = new List<CardInstance>();
 
-        // 2. Lấy danh sách ID của những người đã kết nối
-        var clients = NetworkManager.Singleton.ConnectedClientsIds;
-        currentState.playerCount = clients.Count;
-        currentState.playerOrder = new ulong[GameState.MAX_PLAYERS];
-        currentState.handCounts = new int[GameState.MAX_PLAYERS];
-        
-        // Khởi tạo danh sách bài ẩn cho từng người (Dictionary trên Host)
-        playerHands.Clear();
+        // Mặc định tên là Player + số thứ tự
+        string pName = $"Player {i + 1}"; 
 
-        for (int i = 0; i < clients.Count; i++)
+        // Nếu tìm thấy tên thật từ Lobby, hãy sử dụng nó
+        if (lobbyPlayers != null && i < lobbyPlayers.Count)
         {
-            ulong clientId = clients[i];
-            currentState.playerOrder[i] = clientId;
-            playerHands[clientId] = new List<CardInstance>();
-        }
-
-        // 3. Xào bài và chia mỗi người 7 lá
-        deckManager.BuildStandardDeck();
-        
-        for (int i = 0; i < clients.Count; i++)
-        {
-            ulong clientId = clients[i];
-            for (int c = 0; c < 7; c++)
+            if (lobbyPlayers[i].Data != null && lobbyPlayers[i].Data.ContainsKey("PlayerName"))
             {
-                CardInstance drawnCard = deckManager.DrawCard();
-                playerHands[clientId].Add(drawnCard);
+                pName = lobbyPlayers[i].Data["PlayerName"].Value;
             }
-            // Cập nhật số lượng bài lên state chung
-            currentState.handCounts[i] = 7;
         }
 
-        // 4. Lật lá bài đầu tiên ra giữa bàn (bỏ qua các lá Wild/Action cho dễ ở lượt đầu)
-        CardInstance firstCard;
-        do {
-            firstCard = deckManager.DrawCard();
-        } while (firstCard.type != CardType.Number);
-        
-        currentState.topCard = firstCard;
-        currentState.activeColor = firstCard.color;
-
-        // 5. Cài đặt các thông số lượt đi
-        currentState.currentPlayerIndex = 0; // Host đi trước
-        currentState.isClockwise = true;
-        currentState.pendingPenalty = 0;
-        currentState.phase = GamePhase.Playing; // CHUYỂN SANG TRẠNG THÁI CHƠI
-
-        // 6. Gửi bài ẩn cho từng người và đồng bộ GameState
-        networkGameManager.SyncGameStateClientRpc(currentState);
-        SyncAllPlayerHands();
+        idsList.Add(clientId);
+        namesList.Add(pName);
     }
+
+    // ĐỒNG BỘ TÊN: Gộp danh sách tên thành 1 chuỗi duy nhất cách nhau bằng dấu |
+    string joinedNames = string.Join("|", namesList);
+    networkGameManager.SyncAllPlayerNamesClientRpc(idsList.ToArray(), joinedNames);
+
+    // 3. Xào bài và chia mỗi người 7 lá theo luật UNO [cite: 21, 42]
+    deckManager.BuildStandardDeck();
+    
+    for (int i = 0; i < connectedCount; i++)
+    {
+        ulong clientId = currentState.playerOrder[i];
+        for (int c = 0; c < 7; c++)
+        {
+            CardInstance drawnCard = deckManager.DrawCard();
+            playerHands[clientId].Add(drawnCard);
+        }
+        currentState.handCounts[i] = 7;
+    }
+
+    // 4. Lật lá bài đầu tiên (Phải là lá số theo chuẩn để tránh lỗi lượt đầu) 
+    CardInstance firstCard;
+    do {
+        firstCard = deckManager.DrawCard();
+        if (firstCard.type != CardType.Number)
+        {
+            // Nếu bốc trúng lá chức năng, bỏ vào lại giữa xấp bài và bốc lá khác
+            deckManager.drawPile.Add(firstCard); 
+        }
+    } while (firstCard.type != CardType.Number);
+    
+    currentState.topCard = firstCard;
+    currentState.activeColor = firstCard.color;
+    deckManager.DiscardCard(firstCard);
+
+    // 5. Thiết lập các thông số lượt đi ban đầu [cite: 21]
+    currentState.currentPlayerIndex = 0; // Host luôn đi đầu
+    currentState.isClockwise = true;
+    currentState.pendingPenalty = 0;
+    currentState.phase = GamePhase.Playing;
+
+    // 6. PHÁT LOA TRẠNG THÁI: Đồng bộ GameState và bài ẩn cho từng người [cite: 13, 39]
+    BroadcastState();
+    
+    Debug.Log($"[GameManager] Match started with {connectedCount} players. First card: {firstCard.color} {firstCard.number}");
+}
 
     // Hàm hỗ trợ gửi bài riêng cho từng Client
     // Hàm hỗ trợ gửi bài riêng cho từng Client
@@ -146,7 +181,8 @@ public class GameManager : NetworkBehaviour
         if (card.type == CardType.WildDrawFour) currentState.pendingPenalty += 4;
 
         // 6. Xử lý hiệu ứng (Skip, Reverse)
-        ApplyCardEffects(card);
+        // Ghi nhận lại xem lá bài này có gây nhảy cóc lượt (Skip) hay không
+        bool hasSkippedTurn = ApplyCardEffects(card);
 
         // NẾU ĐÁNH BÀI WILD, TẠM DỪNG VÀ CHỜ CHỌN MÀU
         if (card.type == CardType.Wild || card.type == CardType.WildDrawFour)
@@ -156,24 +192,26 @@ public class GameManager : NetworkBehaviour
         }
         else if (card.type == CardType.Number && card.number == 7)
         {
-            // Tạm dừng game, chuyển sang trạng thái chờ người chơi chọn mục tiêu
             currentState.phase = GamePhase.TargetSelection; 
         }
         else if (card.type == CardType.Number && card.number == 0)
         {
-            // Tạm dừng game, chờ người đánh chọn hướng chuyền bài
             currentState.phase = GamePhase.DirectionSelection; 
         }
         else if (card.type == CardType.Number && card.number == 8)
         {
-            // Kích hoạt sự kiện đếm ngược
             StartReactionEvent(); 
         }
         else 
         {
-            // Bài bình thường, chuyển lượt luôn
-            TurnManager.NextPlayer(ref currentState);
+            // BÀI BÌNH THƯỜNG HOẶC ACTION CARD:
+            // Chỉ chuyển qua người tiếp theo nếu lúc nãy chưa bị nhảy cóc lượt!
+            if (!hasSkippedTurn)
+            {
+                TurnManager.NextPlayer(ref currentState);
+            }
         }
+
         UpdateHandCounts();
         BroadcastState();
     }
@@ -300,20 +338,29 @@ public class GameManager : NetworkBehaviour
         BroadcastState();
     }
 
-    private void ApplyCardEffects(CardInstance card)
+    // Sửa void thành bool
+    private bool ApplyCardEffects(CardInstance card)
     {
         if (card.type == CardType.Reverse)
         {
             if (currentState.playerCount == 2)
+            {
                 TurnManager.SkipNextPlayer(ref currentState); // Luật 2 người
+                return true; // Báo hiệu: ĐÃ NHẢY CÓC LƯỢT
+            }
             else
+            {
                 TurnManager.ReverseDirection(ref currentState);
+                return false; // Chỉ đảo chiều xoay, KHÔNG nhảy lượt
+            }
         }
         else if (card.type == CardType.Skip)
         {
             TurnManager.SkipNextPlayer(ref currentState);
+            return true; // Báo hiệu: ĐÃ NHẢY CÓC LƯỢT
         }
-        // TODO: Mở rộng Luật 0, 7, 8 ở đây trong tương lai
+        
+        return false; // Các lá bài khác không làm nhảy cóc
     }
 
     private void UpdateHandCounts()
