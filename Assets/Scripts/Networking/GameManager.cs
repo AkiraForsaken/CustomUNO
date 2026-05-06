@@ -144,6 +144,8 @@ public class GameManager : NetworkBehaviour
     public void TryPlayCard(ulong clientId, CardInstance card)
     {
         if (!IsServer || currentState.phase != GamePhase.Playing) return;
+        if (currentState.unoVulnerableId != 0 && currentState.unoVulnerableId != clientId)
+            currentState.unoVulnerableId = 0;
 
         // 1. Kiểm tra Turn: Nếu không đúng lượt, từ chối
         if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
@@ -166,6 +168,8 @@ public class GameManager : NetworkBehaviour
         currentState.topCard = card;
         currentState.activeColor = card.color; 
         deckManager.DiscardCard(card);
+
+        if (hand.Count == 1) currentState.unoVulnerableId = clientId;
 
         // 4. Kiểm tra chiến thắng
         if (WinChecker.HasWon(hand.Count))
@@ -303,6 +307,8 @@ public class GameManager : NetworkBehaviour
     public void TryDrawCard(ulong clientId)
     {
         if (!IsServer || currentState.phase != GamePhase.Playing) return;
+        if (currentState.unoVulnerableId != 0 && currentState.unoVulnerableId != clientId)
+            currentState.unoVulnerableId = 0;
         if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
 
         // Nếu đang gánh Penalty do Stacking, phải rút TẤT CẢ
@@ -382,6 +388,8 @@ public class GameManager : NetworkBehaviour
         {
             networkGameManager.SyncPrivateHand(kvp.Key, kvp.Value);
         }
+
+        TriggerBotTurnIfNeeded();
     }
 
     private void StartReactionEvent()
@@ -453,5 +461,97 @@ public class GameManager : NetworkBehaviour
         
         UpdateHandCounts();
         BroadcastState();
+    }
+
+    public void ReceiveUnoCalled(ulong callerId)
+    {
+        if (!IsServer) return;
+
+        ulong vulnerable = currentState.unoVulnerableId;
+        if (vulnerable == 0) return; // window already closed, ignore
+
+        if (callerId == vulnerable)
+        {
+            // Player called UNO on themselves in time — safe
+            currentState.unoVulnerableId = 0;
+        }
+        else
+        {
+            // Another player caught them — penalize the vulnerable player
+            playerHands[vulnerable].Add(deckManager.DrawCard());
+            playerHands[vulnerable].Add(deckManager.DrawCard());
+            currentState.unoVulnerableId = 0;
+            UpdateHandCounts();
+        }
+
+        BroadcastState();
+    }
+
+    private void TriggerBotTurnIfNeeded()
+    {
+        if (currentState.phase != GamePhase.Playing) return;
+        ulong currentId = TurnManager.GetCurrentPlayerId(ref currentState);
+        if (BotManager.Instance != null && BotManager.Instance.IsBot(currentId))
+            StartCoroutine(BotTurnRoutine(currentId));
+    }
+
+    private System.Collections.IEnumerator BotTurnRoutine(ulong botId)
+    {
+        yield return new WaitForSeconds(1.2f); // Simulate thinking
+        ExecuteBotTurn(botId);
+    }
+
+    private void ExecuteBotTurn(ulong botId)
+    {
+        if (!IsServer) return;
+        // Re-validate: still this bot's turn? (state may have changed)
+        if (TurnManager.GetCurrentPlayerId(ref currentState) != botId) return;
+
+        List<CardInstance> hand = playerHands[botId];
+
+        // Find all legal cards
+        var legalCards = new List<CardInstance>();
+        foreach (var card in hand)
+            if (CardValidator.IsLegal(card, currentState, hand.Count))
+                legalCards.Add(card);
+
+        if (legalCards.Count > 0)
+        {
+            // Play a random legal card
+            CardInstance chosen = legalCards[Random.Range(0, legalCards.Count)];
+
+            // If it's a Wild, pre-pick the color with the most cards in hand
+            if (chosen.type == CardType.Wild || chosen.type == CardType.WildDrawFour)
+            {
+                TryPlayCard(botId, chosen);
+                // After TryPlayCard, phase will be ColorSelection — resolve it immediately
+                CardColor bestColor = PickBestColor(hand);
+                ReceiveColorChoice(botId, bestColor);
+            }
+            else
+            {
+                TryPlayCard(botId, chosen);
+            }
+        }
+        else
+        {
+            // No legal card — draw
+            TryDrawCard(botId);
+        }
+    }
+
+    private CardColor PickBestColor(List<CardInstance> hand)
+    {
+        int[] counts = new int[4]; // Red, Green, Blue, Yellow
+        foreach (var c in hand)
+        {
+            if (c.color == CardColor.Red)    counts[0]++;
+            if (c.color == CardColor.Green)  counts[1]++;
+            if (c.color == CardColor.Blue)   counts[2]++;
+            if (c.color == CardColor.Yellow) counts[3]++;
+        }
+        int best = 0;
+        for (int i = 1; i < 4; i++) if (counts[i] > counts[best]) best = i;
+        return (CardColor)best;
     }
 }
