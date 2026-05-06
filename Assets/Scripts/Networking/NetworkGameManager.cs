@@ -24,6 +24,7 @@ public class NetworkGameManager : NetworkBehaviour
             GameEvents.OnTargetChosen += HandleTargetChosen;
             GameEvents.OnPassDirectionChosen += HandlePassDirectionChosen;
             GameEvents.OnReactionClicked += HandleReactionClicked;
+            GameEvents.OnUnoCalled += HandleUnoCalled;
         }
 
         // Host sẽ chạy Coroutine để khởi tạo UI và Game
@@ -72,6 +73,7 @@ public class NetworkGameManager : NetworkBehaviour
             GameEvents.OnTargetChosen -= HandleTargetChosen;
             GameEvents.OnPassDirectionChosen -= HandlePassDirectionChosen;
             GameEvents.OnReactionClicked -= HandleReactionClicked;
+            GameEvents.OnUnoCalled += HandleUnoCalled;
         }
         
         base.OnNetworkDespawn();
@@ -204,5 +206,16 @@ public class NetworkGameManager : NetworkBehaviour
     public void RequestReactionServerRpc(ulong clientId)
     {
         GameManager.Instance.ReceiveReaction(clientId);
+    }
+
+    private void HandleUnoCalled()
+    {
+        RequestUnoServerRpc(NetworkManager.Singleton.LocalClientId);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    public void RequestUnoServerRpc(ulong callerId)
+    {
+        GameManager.Instance.ReceiveUnoCalled(callerId);
     }
 }
