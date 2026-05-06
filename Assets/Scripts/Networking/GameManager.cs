@@ -15,6 +15,9 @@ public class GameManager : NetworkBehaviour
     private Dictionary<ulong, List<CardInstance>> playerHands = new Dictionary<ulong, List<CardInstance>>();
     
     public GameState currentState;
+    // Dùng cho Luật 8
+    private List<ulong> reactedPlayers = new List<ulong>();
+    private Coroutine reactionCoroutine;
 
     private void Awake()
     {
@@ -22,52 +25,6 @@ public class GameManager : NetworkBehaviour
         Instance = this;
     }
 
-    // // Bắt đầu game (gọi khi Lobby đã đầy và Host ấn Start)
-    // public void StartGame(List<ulong> connectedClients)
-    // {
-    //     if (!IsServer) return; // Chỉ Host mới có quyền Start
-
-    //     // Khởi tạo GameState
-    //     currentState = new GameState
-    //     {
-    //         playerOrder = new ulong[GameState.MAX_PLAYERS],
-    //         handCounts = new int[GameState.MAX_PLAYERS],
-    //         playerCount = connectedClients.Count,
-    //         currentPlayerIndex = 0,
-    //         isClockwise = true,
-    //         phase = GamePhase.Playing,
-    //         pendingPenalty = 0
-    //     };
-
-    //     for (int i = 0; i < connectedClients.Count; i++)
-    //     {
-    //         currentState.playerOrder[i] = connectedClients[i];
-    //         playerHands[connectedClients[i]] = new List<CardInstance>();
-    //     }
-
-    //     // 1. Trộn bài
-    //     deckManager.ShuffleDeck(deckManager.drawPile);
-
-    //     // 2. Chia bài (mỗi người 7 lá)
-    //     foreach (var clientId in connectedClients)
-    //     {
-    //         for (int i = 0; i < 7; i++)
-    //         {
-    //             playerHands[clientId].Add(deckManager.DrawCard());
-    //         }
-    //     }
-
-    //     // 3. Lật lá đầu tiên (Giả định lá đầu không phải Action Card cho đơn giản)
-    //     CardInstance firstCard = deckManager.DrawCard();
-    //     currentState.topCard = firstCard;
-    //     currentState.activeColor = firstCard.color;
-    //     deckManager.DiscardCard(firstCard);
-
-    //     UpdateHandCounts();
-    //     BroadcastState();
-    // }
-
-    // Đảm bảo có using Unity.Netcode; ở đầu file
     public void StartMatch()
     {
         // 1. Chỉ Host mới có quyền chia bài
@@ -197,6 +154,21 @@ public class GameManager : NetworkBehaviour
             currentState.phase = GamePhase.ColorSelection;
             // Dừng ở đây, KHÔNG gọi TurnManager.NextPlayer
         }
+        else if (card.type == CardType.Number && card.number == 7)
+        {
+            // Tạm dừng game, chuyển sang trạng thái chờ người chơi chọn mục tiêu
+            currentState.phase = GamePhase.TargetSelection; 
+        }
+        else if (card.type == CardType.Number && card.number == 0)
+        {
+            // Tạm dừng game, chờ người đánh chọn hướng chuyền bài
+            currentState.phase = GamePhase.DirectionSelection; 
+        }
+        else if (card.type == CardType.Number && card.number == 8)
+        {
+            // Kích hoạt sự kiện đếm ngược
+            StartReactionEvent(); 
+        }
         else 
         {
             // Bài bình thường, chuyển lượt luôn
@@ -227,6 +199,68 @@ public class GameManager : NetworkBehaviour
         BroadcastState();
     }
 
+    // Xử lý khi người chơi đã chọn xong người để đổi bài (Luật lá 7)
+    public void ReceiveTargetChoice(ulong clientId, ulong targetId)
+    {
+        if (!IsServer || currentState.phase != GamePhase.TargetSelection) return;
+
+        // Chỉ người vừa đánh lá 7 mới được quyền yêu cầu đổi
+        if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
+
+        // Chống hack: Không được tự đổi với chính mình, và mục tiêu phải tồn tại trong phòng
+        if (clientId == targetId || !playerHands.ContainsKey(targetId)) return; 
+
+        // 1. Thực hiện phép THUẬT hoán đổi 2 danh sách bài
+        List<CardInstance> tempHand = playerHands[clientId];
+        playerHands[clientId] = playerHands[targetId];
+        playerHands[targetId] = tempHand;
+
+        // 2. Trả game về trạng thái bình thường
+        currentState.phase = GamePhase.Playing;
+
+        // 3. Chuyển lượt đi cho người tiếp theo
+        TurnManager.NextPlayer(ref currentState);
+        
+        // 4. Cập nhật và gửi trạng thái mới cho toàn bộ phòng
+        UpdateHandCounts();
+        BroadcastState();
+    }
+
+    // Xử lý khi người chơi đã chọn hướng chuyền bài (Luật lá 0)
+    public void ReceivePassDirectionChoice(ulong clientId, bool passClockwise)
+    {
+        if (!IsServer || currentState.phase != GamePhase.DirectionSelection) return;
+        if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
+
+        int count = currentState.playerCount;
+        if (count > 1)
+        {
+            // Copy danh sách bài hiện tại ra một mảng tạm để lúc chuyền không bị đè mất dữ liệu
+            List<CardInstance>[] tempHands = new List<CardInstance>[count];
+            for(int i = 0; i < count; i++) 
+            {
+                tempHands[i] = playerHands[currentState.playerOrder[i]];
+            }
+
+            // Chuyền bài
+            for (int i = 0; i < count; i++)
+            {
+                ulong currentId = currentState.playerOrder[i];
+                // Tính toán xem mình sẽ nhận bài từ ai (người bên trái hay bên phải)
+                int fromIndex = passClockwise 
+                                ? (i - 1 + count) % count 
+                                : (i + 1) % count;
+                playerHands[currentId] = tempHands[fromIndex];
+            }
+        }
+
+        currentState.phase = GamePhase.Playing;
+        TurnManager.NextPlayer(ref currentState);
+        
+        UpdateHandCounts();
+        BroadcastState();
+    }
+
     // Xử lý Client yêu cầu rút bài
     public void TryDrawCard(ulong clientId)
     {
@@ -246,10 +280,20 @@ public class GameManager : NetworkBehaviour
         else
         {
             // Rút 1 lá bình thường (Theo chuẩn, nếu rút xong đánh được thì cho phép đánh ngay, 
-            // hiện tại ta thiết kế rút xong là mất lượt để xử lý luồng mạng ổn định trước)
             CardInstance drawn = deckManager.DrawCard();
             playerHands[clientId].Add(drawn);
-            TurnManager.NextPlayer(ref currentState);
+
+            // Kiểm tra xem lá vừa rút có hợp lệ để đánh không
+            if (CardValidator.IsLegal(drawn, currentState, playerHands[clientId].Count))
+            {
+                // Nếu đánh được: Giữ nguyên lượt (Không gọi TurnManager.NextPlayer)
+                // Người chơi có thể click vào lá bài vừa rút trên màn hình để đánh xuống.
+            }
+            else
+            {
+                // Nếu không đánh được: Mất lượt
+                TurnManager.NextPlayer(ref currentState);
+            }
         }
 
         UpdateHandCounts();
@@ -291,5 +335,76 @@ public class GameManager : NetworkBehaviour
         {
             networkGameManager.SyncPrivateHand(kvp.Key, kvp.Value);
         }
+    }
+
+    private void StartReactionEvent()
+    {
+        currentState.phase = GamePhase.ReactionEvent;
+        reactedPlayers.Clear();
+        BroadcastState(); // Gửi tín hiệu để UI mọi người hiện nút React
+
+        // Bắt đầu đếm ngược 3 giây
+        if (reactionCoroutine != null) StopCoroutine(reactionCoroutine);
+        reactionCoroutine = StartCoroutine(ReactionTimerRoutine());
+    }
+
+    private System.Collections.IEnumerator ReactionTimerRoutine()
+    {
+        yield return new WaitForSeconds(3f); // Chờ 3 giây
+        ResolveReactionEvent(); // Hết giờ thì phân xử
+    }
+
+    public void ReceiveReaction(ulong clientId)
+    {
+        if (!IsServer || currentState.phase != GamePhase.ReactionEvent) return;
+
+        // Nếu người này chưa bấm thì ghi tên vào danh sách
+        if (!reactedPlayers.Contains(clientId))
+        {
+            reactedPlayers.Add(clientId);
+        }
+
+        // Nếu TẤT CẢ mọi người (cả host và client) đều đã bấm xong trước khi hết 3 giây
+        if (reactedPlayers.Count >= currentState.playerCount)
+        {
+            if (reactionCoroutine != null) StopCoroutine(reactionCoroutine);
+            ResolveReactionEvent();
+        }
+    }
+
+    private void ResolveReactionEvent()
+    {
+        List<ulong> losers = new List<ulong>();
+
+        // Phân xử: Ai là kẻ chậm nhất?
+        if (reactedPlayers.Count < currentState.playerCount)
+        {
+            // Trường hợp 1: Có người KHÔNG thèm bấm -> Những người không có tên bị phạt
+            for (int i = 0; i < currentState.playerCount; i++)
+            {
+                ulong id = currentState.playerOrder[i];
+                if (!reactedPlayers.Contains(id)) losers.Add(id);
+            }
+        }
+        else
+        {
+            // Trường hợp 2: Ai cũng bấm -> Kẻ bấm cuối cùng trong danh sách bị phạt
+            losers.Add(reactedPlayers[reactedPlayers.Count - 1]);
+        }
+
+        // Phạt kẻ thua cuộc rút 2 lá
+        foreach (ulong loserId in losers)
+        {
+            playerHands[loserId].Add(deckManager.DrawCard());
+            playerHands[loserId].Add(deckManager.DrawCard());
+        }
+
+        // Dọn dẹp và đi tiếp
+        reactedPlayers.Clear();
+        currentState.phase = GamePhase.Playing;
+        TurnManager.NextPlayer(ref currentState);
+        
+        UpdateHandCounts();
+        BroadcastState();
     }
 }

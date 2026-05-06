@@ -21,6 +21,9 @@ public class NetworkGameManager : NetworkBehaviour
             GameEvents.OnPlayCardRequested += HandlePlayCardRequested;
             GameEvents.OnDrawCardRequested += HandleDrawCardRequested;
             GameEvents.OnColorChosen += HandleColorChosen;
+            GameEvents.OnTargetChosen += HandleTargetChosen;
+            GameEvents.OnPassDirectionChosen += HandlePassDirectionChosen;
+            GameEvents.OnReactionClicked += HandleReactionClicked;
         }
 
         // Host sẽ chạy Coroutine để khởi tạo UI và Game
@@ -66,6 +69,9 @@ public class NetworkGameManager : NetworkBehaviour
             GameEvents.OnPlayCardRequested -= HandlePlayCardRequested;
             GameEvents.OnDrawCardRequested -= HandleDrawCardRequested;
             GameEvents.OnColorChosen -= HandleColorChosen;
+            GameEvents.OnTargetChosen -= HandleTargetChosen;
+            GameEvents.OnPassDirectionChosen -= HandlePassDirectionChosen;
+            GameEvents.OnReactionClicked -= HandleReactionClicked;
         }
         
         base.OnNetworkDespawn();
@@ -163,5 +169,40 @@ public class NetworkGameManager : NetworkBehaviour
     public void NotifyGameOverClientRpc(string winnerId)
     {
         GameEvents.RaiseGameOver(winnerId);
+    }
+
+    private void HandleTargetChosen(ulong targetId)
+    {
+        // Gửi ID của người bị chọn và ID của chính mình lên Server
+        RequestTargetServerRpc(targetId, NetworkManager.Singleton.LocalClientId);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    public void RequestTargetServerRpc(ulong targetId, ulong clientId)
+    {
+        // Chuyển cho GameManager xử lý việc tráo đổi bài
+        GameManager.Instance.ReceiveTargetChoice(clientId, targetId);
+    }
+
+    private void HandlePassDirectionChosen(bool isClockwise)
+    {
+        RequestPassDirectionServerRpc(isClockwise, NetworkManager.Singleton.LocalClientId);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    public void RequestPassDirectionServerRpc(bool isClockwise, ulong clientId)
+    {
+        GameManager.Instance.ReceivePassDirectionChoice(clientId, isClockwise);
+    }
+
+    private void HandleReactionClicked()
+    {
+        RequestReactionServerRpc(NetworkManager.Singleton.LocalClientId);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    public void RequestReactionServerRpc(ulong clientId)
+    {
+        GameManager.Instance.ReceiveReaction(clientId);
     }
 }

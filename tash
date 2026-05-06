@@ -1,0 +1,13 @@
+[1mdiff --git a/Assets/Scenes/Game.unity b/Assets/Scenes/Game.unity[m
+[1mindex 190a5d5..7368c88 100644[m
+[1m--- a/Assets/Scenes/Game.unity[m
+[1m+++ b/Assets/Scenes/Game.unity[m
+[36m@@ -3929,7 +3929,7 @@[m [mMonoBehaviour:[m
+   opponentTop: {fileID: 1869199055}[m
+   opponentLeft: {fileID: 698440075}[m
+   opponentRight: {fileID: 504143667}[m
+[31m-  topCardImage: {fileID: 1336257439}[m
+[32m+[m[32m  topCardImage: {fileID: 1664782087}[m
+   activeColorRing: {fileID: 0}[m
+   currentColorText: {fileID: 1414667795}[m
+   pileCountText: {fileID: 188980852}[m
