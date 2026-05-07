@@ -71,20 +71,33 @@ public class HouseRulesPanel : MonoBehaviour
     // so the panel reflects the current config and correct interactability.
     public void Refresh()
     {
-        if (HouseRulesManager.Instance == null)
-        {
-            Debug.LogWarning("HouseRulesPanel.Refresh called but no HouseRulesManager.Instance present in scene.", this);
-            return;
-        }
+        if (HouseRulesManager.Instance == null) return;
+
+        // Read from lobby data so clients see host's settings
+        ApplyLobbyRulesToConfig();
 
         var cfg = HouseRulesManager.Instance.Config;
-
-        // Sync toggle visuals without triggering onValueChanged callbacks
-        if (ruleZeroToggle != null) ruleZeroToggle.SetIsOnWithoutNotify(cfg.ruleZeroEnabled);
-        if (ruleSevenToggle != null) ruleSevenToggle.SetIsOnWithoutNotify(cfg.ruleSevenEnabled);
-        if (ruleEightToggle != null) ruleEightToggle.SetIsOnWithoutNotify(cfg.ruleEightEnabled);
+        ruleZeroToggle?.SetIsOnWithoutNotify(cfg.ruleZeroEnabled);
+        ruleSevenToggle?.SetIsOnWithoutNotify(cfg.ruleSevenEnabled);
+        ruleEightToggle?.SetIsOnWithoutNotify(cfg.ruleEightEnabled);
 
         RefreshInteractability();
+    }
+
+    private void ApplyLobbyRulesToConfig()
+    {
+        var data = LobbyManager.Instance?.CurrentLobby?.Data;
+        if (data == null || !data.TryGetValue("HouseRules", out var entry)) return;
+
+        var parts = entry.Value.Split('|');
+        if (parts.Length < 3) return;
+
+        HouseRulesManager.Instance.ApplyConfig(new HouseRulesConfig
+        {
+            ruleZeroEnabled  = parts[0] == "1",
+            ruleSevenEnabled = parts[1] == "1",
+            ruleEightEnabled = parts[2] == "1"
+        });
     }
 
     // Host can toggle; clients see the state but cannot change it
@@ -100,6 +113,16 @@ public class HouseRulesPanel : MonoBehaviour
     }
 
     // ── Toggle callbacks (host only) ──────────────────────────────────────────
+    private void PushRulesToLobby()
+    {
+        if (!IsHost() || HouseRulesManager.Instance == null) return;
+        var cfg = HouseRulesManager.Instance.Config;
+        // Encode all 3 rules as a single "0/0/0" string to avoid 3 separate lobby update calls
+        string encoded = $"{(cfg.ruleZeroEnabled  ? 1 : 0)}|" +
+                        $"{(cfg.ruleSevenEnabled ? 1 : 0)}|" +
+                        $"{(cfg.ruleEightEnabled ? 1 : 0)}";
+        LobbyManager.Instance.UpdateLobbyDataAsync("HouseRules", encoded);
+    }
 
     private void OnRuleZeroChanged(bool value)
     {
@@ -110,6 +133,7 @@ public class HouseRulesPanel : MonoBehaviour
             return;
         }
         HouseRulesManager.Instance.SetRuleZero(value);
+        PushRulesToLobby();
     }
 
     private void OnRuleSevenChanged(bool value)
@@ -121,6 +145,7 @@ public class HouseRulesPanel : MonoBehaviour
             return;
         }
         HouseRulesManager.Instance.SetRuleSeven(value);
+        PushRulesToLobby();
     }
 
     private void OnRuleEightChanged(bool value)
@@ -132,6 +157,7 @@ public class HouseRulesPanel : MonoBehaviour
             return;
         }
         HouseRulesManager.Instance.SetRuleEight(value);
+        PushRulesToLobby();
     }
 
     private bool IsHost() =>

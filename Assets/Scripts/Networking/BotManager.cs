@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using UnityEngine;
 
 public class BotManager : MonoBehaviour
@@ -33,6 +34,11 @@ public class BotManager : MonoBehaviour
         if (botCount <= 0) return false;
         botCount--;
         return true;
+    }
+
+    public void SetBotCount(int count)
+    {
+        botCount = Mathf.Clamp(count, 0, BOT_IDS.Length);
     }
 
     public bool IsBot(ulong clientId)

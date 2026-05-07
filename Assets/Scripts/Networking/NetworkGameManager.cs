@@ -73,7 +73,7 @@ public class NetworkGameManager : NetworkBehaviour
             GameEvents.OnTargetChosen -= HandleTargetChosen;
             GameEvents.OnPassDirectionChosen -= HandlePassDirectionChosen;
             GameEvents.OnReactionClicked -= HandleReactionClicked;
-            GameEvents.OnUnoCalled += HandleUnoCalled;
+            GameEvents.OnUnoCalled -= HandleUnoCalled;
         }
         
         base.OnNetworkDespawn();
@@ -222,10 +222,45 @@ public class NetworkGameManager : NetworkBehaviour
         }
 
         // Cập nhật vào UI
-        var ui = FindObjectOfType<GameUI>();
+        var ui = Object.FindAnyObjectByType<GameUI>();
         if (ui != null)
         {
             ui.UpdatePlayerNames(nameMap);
         }
+    }
+
+    /// Host → all clients: someone added or removed a bot in the lobby
+    [ClientRpc]
+    public void SyncBotCountClientRpc(int botCount)
+    {
+        if (IsServer) return; // host already has the correct count
+        BotManager.Instance?.SetBotCount(botCount);
+        PlayerListUI.Instance?.RefreshList(LobbyManager.Instance.GetCurrentPlayers());
+    }
+
+    /// Host → all clients: a house rule toggle changed
+    [ClientRpc]
+    public void SyncHouseRulesClientRpc(bool ruleZero, bool ruleSeven, bool ruleEight)
+    {
+        if (IsServer) return; // host already has the correct config
+        var config = new HouseRulesConfig
+        {
+            ruleZeroEnabled  = ruleZero,
+            ruleSevenEnabled = ruleSeven,
+            ruleEightEnabled = ruleEight
+        };
+        HouseRulesManager.Instance?.ApplyConfig(config);
+        Object.FindAnyObjectByType<HouseRulesPanel>()?.Refresh();
+    }
+
+    private void HandleUnoCalled()
+    {
+        RequestUnoServerRpc(NetworkManager.Singleton.LocalClientId);
+    }
+
+    [ServerRpc(RequireOwnership = false)]
+    public void RequestUnoServerRpc(ulong callerId)
+    {
+        GameManager.Instance.ReceiveUnoCalled(callerId);
     }
 }

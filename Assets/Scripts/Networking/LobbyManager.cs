@@ -11,8 +11,7 @@ public class LobbyManager : MonoBehaviour
 {
   public static LobbyManager Instance { get; private set; }
   public const int MAX_PLAYERS = 4;
-  public const int MIN_PLAYERS = 1;
-
+  public const int MIN_PLAYERS = 2;
   // The lobby data key for the relay join code
   private const string KEY_RELAY_JOIN_CODE = "RelayJoinCode";
   // The lobby data key for the player's display name
@@ -141,7 +140,24 @@ public class LobbyManager : MonoBehaviour
 
     lobbyPollTimer = 2f;
     currentLobby = await LobbyService.Instance.GetLobbyAsync(currentLobby.Id);
-    PlayerListUI.Instance?.RefreshPlayerList(currentLobby.Players);
+    PlayerListUI.Instance?.RefreshList(currentLobby.Players);
+  }
+
+  public async void UpdateLobbyDataAsync(string key, string value)
+  {
+      if (CurrentLobby == null) return;
+      try
+      {
+          var data = new Dictionary<string, DataObject>
+          {
+              { key, new DataObject(DataObject.VisibilityOptions.Public, value) }
+          };
+          currentLobby = await LobbyService.Instance.UpdateLobbyAsync(
+              CurrentLobby.Id,
+              new UpdateLobbyOptions { Data = data }
+          );
+      }
+      catch (LobbyServiceException e) { Debug.LogError(e); }
   }
 
   // ───── LEAVING ─────
@@ -187,8 +203,18 @@ public class LobbyManager : MonoBehaviour
 
   public string GetLobbyCode() => currentLobby?.LobbyCode ?? "";
 
-  public bool CanStartGame() =>
-    IsHost() && currentLobby != null && currentLobby.Players.Count >= MIN_PLAYERS;
+  public bool CanStartGame()
+  {
+      if (!IsHost() || currentLobby == null) return false;
+
+      int humans = currentLobby.Players.Count;
+      int bots   = 0;
+
+      if (currentLobby.Data != null && currentLobby.Data.TryGetValue("BotCount", out var entry))
+          int.TryParse(entry.Value, out bots);
+
+      return (humans + bots) >= MIN_PLAYERS;
+  }
 
   public void CleanUpOnForcedDisconnect()
   {

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using TMPro;
 using Unity.Netcode;
 using UnityEngine;
@@ -8,12 +9,23 @@ public class UnoButtonUI : MonoBehaviour
     [SerializeField] private Button          unoButton;
     [SerializeField] private TextMeshProUGUI unoLabel;
 
-    // Assign these two colours in the Inspector
     [SerializeField] private Color activeColor   = Color.red;
     [SerializeField] private Color inactiveColor = new Color(0.4f, 0.4f, 0.4f, 1f);
 
-    private void OnEnable()  => GameEvents.OnGameStateUpdated += Refresh;
-    private void OnDisable() => GameEvents.OnGameStateUpdated -= Refresh;
+    private GameState currentState;
+    private int       localHandCount = 0;
+
+    private void OnEnable()
+    {
+        GameEvents.OnGameStateUpdated += OnGameStateUpdated;
+        GameEvents.OnLocalHandUpdated += OnLocalHandUpdated;
+    }
+
+    private void OnDisable()
+    {
+        GameEvents.OnGameStateUpdated -= OnGameStateUpdated;
+        GameEvents.OnLocalHandUpdated -= OnLocalHandUpdated;
+    }
 
     private void Start()
     {
@@ -21,34 +33,54 @@ public class UnoButtonUI : MonoBehaviour
         SetInactive();
     }
 
-    private void Refresh(GameState state)
+    private void OnLocalHandUpdated(List<CardInstance> hand)
     {
-        if (state.unoVulnerableId == 0) { SetInactive(); return; }
+        localHandCount = hand.Count;
+        Evaluate();
+    }
 
+    private void OnGameStateUpdated(GameState state)
+    {
+        currentState = state;
+        Evaluate();
+    }
+
+    private void Evaluate()
+    {
         ulong localId = NetworkManager.Singleton.LocalClientId;
 
-        if (state.unoVulnerableId == localId)
+        // ── Priority 1: someone is already vulnerable (post-play window) ──
+        if (currentState.unoVulnerableId != 0)
         {
-            // Local player forgot to call UNO
-            unoLabel.text = "UNO!";
-            SetActive();
+            if (currentState.unoVulnerableId == localId)
+                SetActive("UNO!");   // you forgot to call it
+            else
+                SetActive("CATCH!"); // punish the other player
+            return;
         }
-        else
+
+        // ── Priority 2: it's your turn and you have 2 cards (pre-play prompt) ──
+        bool isMyTurn = currentState.playerCount > 0
+            && currentState.playerOrder[currentState.currentPlayerIndex] == localId;
+
+        if (isMyTurn && localHandCount == 2)
         {
-            // Someone else is vulnerable — you can catch them
-            unoLabel.text = "CATCH!";
-            SetActive();
+            SetActive("UNO!");
+            return;
         }
+
+        SetInactive();
     }
 
     private void OnUnoPressed()
     {
         GameEvents.RaiseUnoCalled();
-        SetInactive(); // Optimistically disable to prevent double-press
+        SetInactive(); // optimistically disable to prevent double-press
     }
 
-    private void SetActive()
+    private void SetActive(string label)
     {
+        unoLabel.text              = label;
         unoButton.interactable     = true;
         unoButton.image.color      = activeColor;
         unoLabel.color             = Color.white;
@@ -56,9 +88,9 @@ public class UnoButtonUI : MonoBehaviour
 
     private void SetInactive()
     {
+        unoLabel.text              = "UNO";
         unoButton.interactable     = false;
         unoButton.image.color      = inactiveColor;
-        if (unoLabel != null) unoLabel.text = "UNO";
         unoLabel.color             = Color.grey;
     }
 }

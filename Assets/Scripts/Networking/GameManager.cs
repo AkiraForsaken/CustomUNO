@@ -18,6 +18,8 @@ public class GameManager : NetworkBehaviour
     // Dùng cho Luật 8
     private List<ulong> reactedPlayers = new List<ulong>();
     private Coroutine reactionCoroutine;
+    // Tracks which player has already drawn this turn (MaxValue = nobody has drawn yet)
+    private ulong drewThisTurn = ulong.MaxValue;
 
     private void Awake()
     {
@@ -25,96 +27,195 @@ public class GameManager : NetworkBehaviour
         Instance = this;
     }
 
-    public void StartMatch()
-{
-    // 1. Chỉ Host/Server mới có quyền điều phối trận đấu
-    if (!NetworkManager.Singleton.IsServer) return;
-
-    // 2. Lấy danh sách ID của những người đã kết nối thực tế qua mạng
-    var clients = NetworkManager.Singleton.ConnectedClientsIds;
-    int connectedCount = clients.Count;
-
-    // Khởi tạo GameState cơ bản [cite: 11]
-    currentState.playerCount = connectedCount;
-    currentState.playerOrder = new ulong[GameState.MAX_PLAYERS];
-    currentState.handCounts = new int[GameState.MAX_PLAYERS];
-    
-    // Xóa dữ liệu cũ trên Host
-    playerHands.Clear();
-
-    // Chuẩn bị danh sách để đồng bộ tên qua mạng
-    List<ulong> idsList = new List<ulong>();
-    List<string> namesList = new List<string>();
-
-    // Lấy thông tin người chơi từ LobbyManager (nếu có) 
-    var lobbyPlayers = LobbyManager.Instance?.GetCurrentPlayers();
-
-    for (int i = 0; i < connectedCount; i++)
+    private void AdvanceTurn()
     {
-        ulong clientId = clients[i];
-        currentState.playerOrder[i] = clientId;
-        playerHands[clientId] = new List<CardInstance>();
+        TurnManager.NextPlayer(ref currentState);
+        drewThisTurn = ulong.MaxValue;
+    }
 
-        // Mặc định tên là Player + số thứ tự
-        string pName = $"Player {i + 1}"; 
+    private void SkipTurn()
+    {
+        TurnManager.SkipNextPlayer(ref currentState);
+        drewThisTurn = ulong.MaxValue;
+    }
 
-        // Nếu tìm thấy tên thật từ Lobby, hãy sử dụng nó
-        if (lobbyPlayers != null && i < lobbyPlayers.Count)
+    /* public void StartMatch()
+    {
+        // 1. Chỉ Host/Server mới có quyền điều phối trận đấu
+        if (!NetworkManager.Singleton.IsServer) return;
+
+        var allPlayers = new List<ulong>(NetworkManager.Singleton.ConnectedClientsIds);
+        if (BotManager.Instance != null)
+            allPlayers.AddRange(BotManager.Instance.GetActiveBotIds());
+
+        // 2. Lấy danh sách ID của những người đã kết nối thực tế qua mạng
+        // var clients = NetworkManager.Singleton.ConnectedClientsIds;
+        // int connectedCount = clients.Count;
+
+        // Khởi tạo GameState cơ bản [cite: 11]
+        currentState.playerCount = allPlayers.Count;
+        // currentState.playerCount = connectedCount;
+        currentState.playerOrder = new ulong[GameState.MAX_PLAYERS];
+        currentState.handCounts = new int[GameState.MAX_PLAYERS];
+        
+        // Xóa dữ liệu cũ trên Host
+        playerHands.Clear();
+
+        // Chuẩn bị danh sách để đồng bộ tên qua mạng
+        List<ulong> idsList = new List<ulong>();
+        List<string> namesList = new List<string>();
+
+        // Lấy thông tin người chơi từ LobbyManager (nếu có) 
+        var lobbyPlayers = LobbyManager.Instance?.GetCurrentPlayers();
+
+        for (int i = 0; i < connectedCount; i++)
         {
-            if (lobbyPlayers[i].Data != null && lobbyPlayers[i].Data.ContainsKey("PlayerName"))
+            ulong clientId = clients[i];
+            currentState.playerOrder[i] = clientId;
+            playerHands[clientId] = new List<CardInstance>();
+
+            // Mặc định tên là Player + số thứ tự
+            string pName = $"Player {i + 1}"; 
+
+            // Nếu tìm thấy tên thật từ Lobby, hãy sử dụng nó
+            if (lobbyPlayers != null && i < lobbyPlayers.Count)
             {
-                pName = lobbyPlayers[i].Data["PlayerName"].Value;
+                if (lobbyPlayers[i].Data != null && lobbyPlayers[i].Data.ContainsKey("PlayerName"))
+                {
+                    pName = lobbyPlayers[i].Data["PlayerName"].Value;
+                }
+            }
+
+            idsList.Add(clientId);
+            namesList.Add(pName);
+        }
+
+        // ĐỒNG BỘ TÊN: Gộp danh sách tên thành 1 chuỗi duy nhất cách nhau bằng dấu |
+        string joinedNames = string.Join("|", namesList);
+        networkGameManager.SyncAllPlayerNamesClientRpc(idsList.ToArray(), joinedNames);
+
+        // 3. Xào bài và chia mỗi người 7 lá theo luật UNO [cite: 21, 42]
+        deckManager.BuildStandardDeck();
+        
+        for (int i = 0; i < connectedCount; i++)
+        {
+            ulong clientId = currentState.playerOrder[i];
+            for (int c = 0; c < 7; c++)
+            {
+                CardInstance drawnCard = deckManager.DrawCard();
+                playerHands[clientId].Add(drawnCard);
+            }
+            currentState.handCounts[i] = 7;
+        }
+
+        // 4. Lật lá bài đầu tiên (Phải là lá số theo chuẩn để tránh lỗi lượt đầu) 
+        CardInstance firstCard;
+        do {
+            firstCard = deckManager.DrawCard();
+            if (firstCard.type != CardType.Number)
+            {
+                // Nếu bốc trúng lá chức năng, bỏ vào lại giữa xấp bài và bốc lá khác
+                deckManager.drawPile.Add(firstCard); 
+            }
+        } while (firstCard.type != CardType.Number);
+        
+        currentState.topCard = firstCard;
+        currentState.activeColor = firstCard.color;
+        deckManager.DiscardCard(firstCard);
+
+        // 5. Thiết lập các thông số lượt đi ban đầu [cite: 21]
+        currentState.currentPlayerIndex = 0; // Host luôn đi đầu
+        currentState.isClockwise = true;
+        currentState.pendingPenalty = 0;
+        currentState.phase = GamePhase.Playing;
+
+        // 6. PHÁT LOA TRẠNG THÁI: Đồng bộ GameState và bài ẩn cho từng người [cite: 13, 39]
+        BroadcastState();
+        
+        Debug.Log($"[GameManager] Match started with {connectedCount} players. First card: {firstCard.color} {firstCard.number}");
+    } */
+
+    public void StartMatch()
+    {
+        if (!NetworkManager.Singleton.IsServer) return;
+
+        // Merge real clients + bots into one unified player list
+        var allPlayers = new List<ulong>(NetworkManager.Singleton.ConnectedClientsIds);
+        if (BotManager.Instance != null)
+            allPlayers.AddRange(BotManager.Instance.GetActiveBotIds());
+
+        currentState.playerCount = allPlayers.Count;
+        currentState.playerOrder = new ulong[GameState.MAX_PLAYERS];
+        currentState.handCounts  = new int[GameState.MAX_PLAYERS];
+        playerHands.Clear();
+
+        var lobbyPlayers = LobbyManager.Instance?.GetCurrentPlayers();
+        List<ulong>  idsList    = new List<ulong>();
+        List<string> namesList  = new List<string>();
+        int          lobbyIndex = 0; // separate index for real lobby players only
+
+        for (int i = 0; i < allPlayers.Count; i++)
+        {
+            ulong clientId = allPlayers[i];
+            currentState.playerOrder[i] = clientId;
+            playerHands[clientId]       = new List<CardInstance>();
+            idsList.Add(clientId);
+
+            if (BotManager.Instance != null && BotManager.Instance.IsBot(clientId))
+            {
+                // Use bot display name
+                namesList.Add(BotManager.Instance.GetBotName(clientId));
+            }
+            else
+            {
+                // Use real player name from lobby if available
+                string pName = $"Player {lobbyIndex + 1}";
+                if (lobbyPlayers != null && lobbyIndex < lobbyPlayers.Count)
+                {
+                    var data = lobbyPlayers[lobbyIndex].Data;
+                    if (data != null && data.ContainsKey("PlayerName"))
+                        pName = data["PlayerName"].Value;
+                }
+                namesList.Add(pName);
+                lobbyIndex++;
             }
         }
 
-        idsList.Add(clientId);
-        namesList.Add(pName);
-    }
+        // Sync names to all clients
+        string joinedNames = string.Join("|", namesList);
+        networkGameManager.SyncAllPlayerNamesClientRpc(idsList.ToArray(), joinedNames);
 
-    // ĐỒNG BỘ TÊN: Gộp danh sách tên thành 1 chuỗi duy nhất cách nhau bằng dấu |
-    string joinedNames = string.Join("|", namesList);
-    networkGameManager.SyncAllPlayerNamesClientRpc(idsList.ToArray(), joinedNames);
+        deckManager.BuildStandardDeck();
 
-    // 3. Xào bài và chia mỗi người 7 lá theo luật UNO [cite: 21, 42]
-    deckManager.BuildStandardDeck();
-    
-    for (int i = 0; i < connectedCount; i++)
-    {
-        ulong clientId = currentState.playerOrder[i];
-        for (int c = 0; c < 7; c++)
+        // Deal 7 cards to everyone, including bots
+        for (int i = 0; i < allPlayers.Count; i++)
         {
-            CardInstance drawnCard = deckManager.DrawCard();
-            playerHands[clientId].Add(drawnCard);
+            ulong clientId = allPlayers[i];
+            for (int c = 0; c < 7; c++)
+                playerHands[clientId].Add(deckManager.DrawCard());
+            currentState.handCounts[i] = 7;
         }
-        currentState.handCounts[i] = 7;
+
+        CardInstance firstCard;
+        do {
+            firstCard = deckManager.DrawCard();
+            if (firstCard.type != CardType.Number)
+                deckManager.drawPile.Add(firstCard);
+        } while (firstCard.type != CardType.Number);
+
+        currentState.topCard     = firstCard;
+        currentState.activeColor = firstCard.color;
+        deckManager.DiscardCard(firstCard);
+
+        currentState.currentPlayerIndex = 0;
+        currentState.isClockwise        = true;
+        currentState.pendingPenalty     = 0;
+        currentState.phase              = GamePhase.Playing;
+
+        BroadcastState();
+
+        Debug.Log($"[GameManager] Match started with {allPlayers.Count} players. First card: {firstCard.color} {firstCard.number}");
     }
-
-    // 4. Lật lá bài đầu tiên (Phải là lá số theo chuẩn để tránh lỗi lượt đầu) 
-    CardInstance firstCard;
-    do {
-        firstCard = deckManager.DrawCard();
-        if (firstCard.type != CardType.Number)
-        {
-            // Nếu bốc trúng lá chức năng, bỏ vào lại giữa xấp bài và bốc lá khác
-            deckManager.drawPile.Add(firstCard); 
-        }
-    } while (firstCard.type != CardType.Number);
-    
-    currentState.topCard = firstCard;
-    currentState.activeColor = firstCard.color;
-    deckManager.DiscardCard(firstCard);
-
-    // 5. Thiết lập các thông số lượt đi ban đầu [cite: 21]
-    currentState.currentPlayerIndex = 0; // Host luôn đi đầu
-    currentState.isClockwise = true;
-    currentState.pendingPenalty = 0;
-    currentState.phase = GamePhase.Playing;
-
-    // 6. PHÁT LOA TRẠNG THÁI: Đồng bộ GameState và bài ẩn cho từng người [cite: 13, 39]
-    BroadcastState();
-    
-    Debug.Log($"[GameManager] Match started with {connectedCount} players. First card: {firstCard.color} {firstCard.number}");
-}
 
     // Hàm hỗ trợ gửi bài riêng cho từng Client
     // Hàm hỗ trợ gửi bài riêng cho từng Client
@@ -123,6 +224,10 @@ public class GameManager : NetworkBehaviour
         foreach (var kvp in playerHands)
         {
             ulong clientId = kvp.Key;
+
+            // Bots have no network connection — never send them a ClientRpc
+            if (BotManager.Instance != null && BotManager.Instance.IsBot(clientId))
+                continue;
             
             // TỐI ƯU: Nếu là Host, tự động nạp bài thẳng vào UI, không cần chờ mạng
             if (clientId == NetworkManager.Singleton.LocalClientId)
@@ -144,11 +249,11 @@ public class GameManager : NetworkBehaviour
     public void TryPlayCard(ulong clientId, CardInstance card)
     {
         if (!IsServer || currentState.phase != GamePhase.Playing) return;
+        if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
         if (currentState.unoVulnerableId != 0 && currentState.unoVulnerableId != clientId)
             currentState.unoVulnerableId = 0;
-
-        // 1. Kiểm tra Turn: Nếu không đúng lượt, từ chối
-        if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
+        
+        drewThisTurn = ulong.MaxValue; // ← add this: player is acting, reset draw memory
 
         List<CardInstance> hand = playerHands[clientId];
         
@@ -212,7 +317,7 @@ public class GameManager : NetworkBehaviour
             // Chỉ chuyển qua người tiếp theo nếu lúc nãy chưa bị nhảy cóc lượt!
             if (!hasSkippedTurn)
             {
-                TurnManager.NextPlayer(ref currentState);
+                AdvanceTurn();
             }
         }
 
@@ -235,7 +340,8 @@ public class GameManager : NetworkBehaviour
         currentState.phase = GamePhase.Playing;
 
         // 3. Bây giờ mới chuyển lượt đi cho người tiếp theo
-        TurnManager.NextPlayer(ref currentState);
+        // TurnManager.NextPlayer(ref currentState);
+        AdvanceTurn();
         
         UpdateHandCounts();
         BroadcastState();
@@ -261,7 +367,8 @@ public class GameManager : NetworkBehaviour
         currentState.phase = GamePhase.Playing;
 
         // 3. Chuyển lượt đi cho người tiếp theo
-        TurnManager.NextPlayer(ref currentState);
+        // TurnManager.NextPlayer(ref currentState);
+        AdvanceTurn();
         
         // 4. Cập nhật và gửi trạng thái mới cho toàn bộ phòng
         UpdateHandCounts();
@@ -297,7 +404,8 @@ public class GameManager : NetworkBehaviour
         }
 
         currentState.phase = GamePhase.Playing;
-        TurnManager.NextPlayer(ref currentState);
+        // TurnManager.NextPlayer(ref currentState);
+        AdvanceTurn();
         
         UpdateHandCounts();
         BroadcastState();
@@ -307,9 +415,9 @@ public class GameManager : NetworkBehaviour
     public void TryDrawCard(ulong clientId)
     {
         if (!IsServer || currentState.phase != GamePhase.Playing) return;
+        if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
         if (currentState.unoVulnerableId != 0 && currentState.unoVulnerableId != clientId)
             currentState.unoVulnerableId = 0;
-        if (currentState.playerOrder[currentState.currentPlayerIndex] != clientId) return;
 
         // Nếu đang gánh Penalty do Stacking, phải rút TẤT CẢ
         if (currentState.pendingPenalty > 0)
@@ -319,25 +427,27 @@ public class GameManager : NetworkBehaviour
                 playerHands[clientId].Add(deckManager.DrawCard());
             }
             currentState.pendingPenalty = 0;
-            TurnManager.NextPlayer(ref currentState); // Bị phạt xong mất luôn lượt
+            // TurnManager.NextPlayer(ref currentState); // Bị phạt xong mất luôn lượt
+            AdvanceTurn();
         }
         else
         {
             // Rút 1 lá bình thường (Theo chuẩn, nếu rút xong đánh được thì cho phép đánh ngay, 
+            if (drewThisTurn == clientId)
+            {
+                Debug.Log($"[GameManager] Client {clientId} tried to draw twice in one turn.");
+                return;
+            }
+
             CardInstance drawn = deckManager.DrawCard();
             playerHands[clientId].Add(drawn);
 
+            drewThisTurn = clientId;
+
             // Kiểm tra xem lá vừa rút có hợp lệ để đánh không
-            if (CardValidator.IsLegal(drawn, currentState, playerHands[clientId].Count))
-            {
-                // Nếu đánh được: Giữ nguyên lượt (Không gọi TurnManager.NextPlayer)
-                // Người chơi có thể click vào lá bài vừa rút trên màn hình để đánh xuống.
-            }
-            else
-            {
-                // Nếu không đánh được: Mất lượt
-                TurnManager.NextPlayer(ref currentState);
-            }
+            if (!CardValidator.IsLegal(drawn, currentState, playerHands[clientId].Count))
+                AdvanceTurn(); // unplayable — lose the turn, also clears drewThisTurn
+            // else: playable — keep the turn so they can choose to play it
         }
 
         UpdateHandCounts();
@@ -351,7 +461,8 @@ public class GameManager : NetworkBehaviour
         {
             if (currentState.playerCount == 2)
             {
-                TurnManager.SkipNextPlayer(ref currentState); // Luật 2 người
+                // TurnManager.SkipNextPlayer(ref currentState); // Luật 2 người
+                SkipTurn();
                 return true; // Báo hiệu: ĐÃ NHẢY CÓC LƯỢT
             }
             else
@@ -362,7 +473,8 @@ public class GameManager : NetworkBehaviour
         }
         else if (card.type == CardType.Skip)
         {
-            TurnManager.SkipNextPlayer(ref currentState);
+            // TurnManager.SkipNextPlayer(ref currentState);
+            SkipTurn();
             return true; // Báo hiệu: ĐÃ NHẢY CÓC LƯỢT
         }
         
@@ -386,6 +498,9 @@ public class GameManager : NetworkBehaviour
         // Gửi bài ẩn (Client nào chỉ nhận được mảng bài của Client đó)
         foreach (var kvp in playerHands)
         {
+            // Bots have no network connection - skip them
+            if (BotManager.Instance != null && BotManager.Instance.IsBot(kvp.Key))
+                continue;
             networkGameManager.SyncPrivateHand(kvp.Key, kvp.Value);
         }
 
@@ -457,7 +572,8 @@ public class GameManager : NetworkBehaviour
         // Dọn dẹp và đi tiếp
         reactedPlayers.Clear();
         currentState.phase = GamePhase.Playing;
-        TurnManager.NextPlayer(ref currentState);
+        // TurnManager.NextPlayer(ref currentState);
+        AdvanceTurn();
         
         UpdateHandCounts();
         BroadcastState();
@@ -489,12 +605,78 @@ public class GameManager : NetworkBehaviour
 
     private void TriggerBotTurnIfNeeded()
     {
-        if (currentState.phase != GamePhase.Playing) return;
-        ulong currentId = TurnManager.GetCurrentPlayerId(ref currentState);
-        if (BotManager.Instance != null && BotManager.Instance.IsBot(currentId))
-            StartCoroutine(BotTurnRoutine(currentId));
+        ulong currentId  = TurnManager.GetCurrentPlayerId(ref currentState);
+        bool  currentBot = BotManager.Instance != null && BotManager.Instance.IsBot(currentId);
+
+        switch (currentState.phase)
+        {
+            case GamePhase.Playing:
+                if (currentBot)
+                    StartCoroutine(BotTurnRoutine(currentId));
+                break;
+
+            case GamePhase.TargetSelection:
+                // The bot who just played a 7 must now pick a target
+                if (currentBot)
+                    StartCoroutine(BotTargetSelectionRoutine(currentId));
+                break;
+
+            case GamePhase.DirectionSelection:
+                // The bot who just played a 0 must now pick a direction
+                if (currentBot)
+                    StartCoroutine(BotDirectionSelectionRoutine(currentId));
+                break;
+
+            case GamePhase.ReactionEvent:
+                // All bots in the game must react — regardless of whose turn it is
+                StartCoroutine(BotReactionRoutine());
+                break;
+        }
     }
 
+    // Rule 7: bot picks a random opponent to swap hands with
+    private System.Collections.IEnumerator BotTargetSelectionRoutine(ulong botId)
+    {
+        yield return new WaitForSeconds(1f);
+        if (currentState.phase != GamePhase.TargetSelection) yield break;
+
+        var targets = new List<ulong>();
+        for (int i = 0; i < currentState.playerCount; i++)
+        {
+            ulong id = currentState.playerOrder[i];
+            if (id != botId) targets.Add(id);
+        }
+
+        if (targets.Count > 0)
+            ReceiveTargetChoice(botId, targets[Random.Range(0, targets.Count)]);
+    }
+
+    // Rule 0: bot randomly picks which direction to pass hands
+    private System.Collections.IEnumerator BotDirectionSelectionRoutine(ulong botId)
+    {
+        yield return new WaitForSeconds(1f);
+        if (currentState.phase != GamePhase.DirectionSelection) yield break;
+
+        ReceivePassDirectionChoice(botId, Random.value > 0.5f);
+    }
+
+    // Rule 8: all bots react quickly but not instantly, so they feel natural
+    private System.Collections.IEnumerator BotReactionRoutine()
+    {
+        // Stagger each bot's reaction slightly so they don't all land at once
+        for (int i = 0; i < currentState.playerCount; i++)
+        {
+            ulong id = currentState.playerOrder[i];
+            if (BotManager.Instance == null || !BotManager.Instance.IsBot(id)) continue;
+
+            yield return new WaitForSeconds(Random.Range(0.3f, 1.2f));
+
+            // Re-check phase — event may have already resolved
+            if (currentState.phase != GamePhase.ReactionEvent) yield break;
+
+            ReceiveReaction(id);
+        }
+    }
     private System.Collections.IEnumerator BotTurnRoutine(ulong botId)
     {
         yield return new WaitForSeconds(1.2f); // Simulate thinking
